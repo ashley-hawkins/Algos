@@ -1,0 +1,36 @@
+[package]
+edition = "2021"
+name = "discord_voice"
+version = "0.0.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+byteorder = "1.5.0"
+derivative = "2.2.0"
+dirs = "5.0.1"
+file-rotate = "0.7.6"
+# Default enable napi4 feature, see https://nodejs.org/api/n-api.html#node-api-version-matrix
+napi = { version = "2.12.2", default-features = false, features = [
+    "napi9",
+    "tokio_rt",
+    "compat-mode",
+] }
+# Default enable napi4 feature, see https://nodejs.org/api/n-api.html#node-api-version-matrix
+napi-derive = "2.12.2"
+napi_derive_ext = { version = "0.1.0", path = "napi_derive_ext" }
+parking_lot = "0.12.3"
+pin-utils = "0.1.0"
+slog = "2.7.0"
+slog-async = "2.8.0"
+slog-term = "2.9.1"
+static_assertions_next = "1.1.2"
+tokio = { version = "1.40.0", features = ["macros", "net", "parking_lot", "sync", "time"] }
+
+[build-dependencies]
+napi-build = "2.0.1"
+
+[profile.release]
+lto = true
+strip = "symbols"
