@@ -1,5 +1,8 @@
 use crate::drains::{DrainExt, JsWriter};
 use crate::{SyncMutex, SyncMutexGuard};
+use cpal::traits::{DeviceTrait, HostTrait};
+use napi::bindgen_prelude::ValidateNapiValue;
+use napi::NapiValue;
 use napi::{
 	threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
 	tokio, Env, JsFunction, JsObject, Result,
@@ -87,16 +90,16 @@ impl SyncVoiceEngine {
 		info!(self.lock().logger(), "setClipBufferLength called (UNIMPLEMENTED)"; "length" => length);
 	}
 
-	pub(crate) fn set_on_voice_callback(&self, callback: JsFunction) {
-		info!(self.lock().logger(), "setOnVoiceCallback called (UNIMPLEMENTED)");
-	}
-
-	pub(crate) fn set_emit_vad_level(&self, emit: bool) {
+	pub(crate) fn set_emit_v_a_d_level(&self, emit: bool) {
 		info!(self.lock().logger(), "setEmitVADLevel called (UNIMPLEMENTED)"; "emit" => emit);
 	}
 
-	pub(crate) fn set_emit_vad_level2(&self, emit: bool) {
+	pub(crate) fn set_emit_v_a_d_level2(&self, emit: bool) {
 		info!(self.lock().logger(), "setEmitVADLevel2 called (UNIMPLEMENTED)"; "emit" => emit);
+	}
+
+	pub(crate) fn set_on_voice_callback(&self, callback: JsFunction) {
+		info!(self.lock().logger(), "setOnVoiceCallback called (UNIMPLEMENTED)");
 	}
 
 	pub(crate) fn set_loopback(&self, loopback: bool, parameters: JsObject) {
@@ -127,18 +130,72 @@ impl SyncVoiceEngine {
 		info!(self.lock().logger(), "setVideoInputDevice called (UNIMPLEMENTED)"; "device_id" => device_id);
 	}
 
-	pub(crate) fn get_output_devices(&self) /*-> Result<Vec</* DeviceInfo */ ()>>*/
-	{
+	pub(crate) fn get_output_devices(&self, env: Env, callback: JsFunction) -> napi::Result<()> {
 		// TODO
-		info!(self.lock().logger(), "getOutputDevices called (UNIMPLEMENTED)");
-		// Ok(vec![])
+		info!(self.lock().logger(), "getOutputDevices called (IMPLEMENTED)");
+		info!(self.lock().logger(), "Supported hosts:\n  {:?}", cpal::ALL_HOSTS);
+		let available_hosts = cpal::available_hosts();
+		info!(self.lock().logger(), "Available hosts:\n  {:?}", available_hosts);
+
+		let mut output_devices = Vec::new();
+
+		for host_id in available_hosts {
+			let host = cpal::host_from_id(host_id).unwrap();
+			info!(self.lock().logger(), "Host: {:?}", host.id());
+			let devices = host.devices().unwrap();
+			for device in devices {
+				output_devices.push(DeviceInfo {
+					name: format!("{} - {}", host_id.name(), device.name().unwrap()),
+					guid: "".to_string(),
+					index: output_devices.len() as u32,
+				});
+				info!(self.lock().logger(), "  Found Device: {:?}", device.name().unwrap());
+			}
+		}
+
+		callback
+			.call(
+				None,
+				&[napi::bindgen_prelude::Array::from_vec(&env, output_devices)?
+					.coerce_to_object()?],
+			)
+			.unwrap();
+
+		Ok(())
 	}
 
-	pub(crate) fn get_input_devices(&self) /*-> Result<Vec</* DeviceInfo */ ()>>*/
-	{
+	pub(crate) fn get_input_devices(&self, env: Env, callback: JsFunction) -> napi::Result<()> {
 		// TODO
-		info!(self.lock().logger(), "getInputDevices called (UNIMPLEMENTED)");
-		// Ok(vec![])
+		info!(self.lock().logger(), "getInputDevices called (IMPLEMENTED)");
+		info!(self.lock().logger(), "Supported hosts:\n  {:?}", cpal::ALL_HOSTS);
+		let available_hosts = cpal::available_hosts();
+		info!(self.lock().logger(), "Available hosts:\n  {:?}", available_hosts);
+
+		let mut input_devices = Vec::new();
+
+		for host_id in available_hosts {
+			let host = cpal::host_from_id(host_id).unwrap();
+			info!(self.lock().logger(), "Host: {:?}", host.id());
+			let devices = host.devices().unwrap();
+			for device in devices {
+				input_devices.push(DeviceInfo {
+					name: format!("{} - {}", host_id.name(), device.name().unwrap()),
+					guid: "".to_string(),
+					index: input_devices.len() as u32,
+				});
+				info!(self.lock().logger(), "  Found Device: {:?}", device.name().unwrap());
+			}
+		}
+
+		callback
+			.call(
+				None,
+				&[napi::bindgen_prelude::Array::from_vec(&env, input_devices)?
+					.coerce_to_object()?],
+			)
+			.unwrap();
+
+		Ok(())
 	}
 
 	pub(crate) fn get_video_input_devices(&self, callback: JsFunction) {
@@ -221,7 +278,10 @@ impl SyncVoiceEngine {
 		info!(self.lock().logger(), "getAudioSubsystem called (HARD-CODED)");
 		let tsfn: ThreadsafeFunction<(), ErrorStrategy::Fatal> = callback
 			.create_threadsafe_function(0, |ctx| {
-				Ok(vec![ctx.env.create_string("standard")?, ctx.env.create_string("linuxPulse")?])
+				Ok(vec![
+					ctx.env.create_string("standard")?,
+					ctx.env.create_string("linuxPulseAudio")?,
+				])
 			})?;
 		tokio::spawn(async move {
 			let _ = tsfn.call((), ThreadsafeFunctionCallMode::NonBlocking);
@@ -308,6 +368,13 @@ pub enum DegradationPreference {
 	MAINTAIN_FRAMERATE = 1,
 	BALANCED = 2,
 	DISABLED = 3,
+}
+
+#[napi(object)]
+pub(crate) struct DeviceInfo {
+	pub name: String,
+	pub guid: String,
+	pub index: u32,
 }
 
 #[napi(object)]
