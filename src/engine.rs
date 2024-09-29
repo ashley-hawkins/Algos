@@ -200,14 +200,14 @@ impl SyncVoiceEngine {
 
 	pub(crate) fn get_video_input_devices(&self, callback: JsFunction) {
 		info!(self.lock().logger(), "getVideoInputDevices called (HARD-CODED)");
-		// let tsfn: ThreadsafeFunction<(), ErrorStrategy::Fatal> = callback
-		// 	.create_threadsafe_function(0, |ctx| {
-		// 		ctx.env.create_array_with_length(0).map(|x| vec![x])
-		// 	})
-		// 	.unwrap();
-		// tokio::spawn(async move {
-		// 	let _ = tsfn.call((), ThreadsafeFunctionCallMode::NonBlocking);
-		// });
+		let tsfn: ThreadsafeFunction<(), ErrorStrategy::Fatal> = callback
+			.create_threadsafe_function(0, |ctx| {
+				ctx.env.create_array_with_length(0).map(|x| vec![x])
+			})
+			.unwrap();
+		tokio::spawn(async move {
+			let _ = tsfn.call((), ThreadsafeFunctionCallMode::NonBlocking);
+		});
 	}
 
 	pub(crate) fn set_video_output_sink(&self, callback: JsFunction) {
