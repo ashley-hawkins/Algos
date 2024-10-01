@@ -1,0 +1,3 @@
+[submodule "alkali"]
+	path = alkali
+	url = git@ssh.kaydax.xyz:w/alkali.git
