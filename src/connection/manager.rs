@@ -5,6 +5,8 @@ use tokio::{net::UdpSocket, select, sync::oneshot, time::timeout};
 
 use super::structures::{IpDiscoveryPacket, RtpPacket};
 
+use crate::{connection::structures::RtpPacketTrait, crypt::VoiceConnectionCrypt, SyncMutex};
+
 #[derive(Debug)]
 enum VoiceConnMessage {
 	Ping { seq: u8 },
@@ -61,6 +63,7 @@ pub struct ConnectionManagerHandle {
 
 pub(crate) fn create_connection_manager(
 	logger: slog::Logger,
+	crypt: Arc<SyncMutex<VoiceConnectionCrypt>>,
 	mut connection: ConnectionHandle,
 ) -> ConnectionManagerHandle {
 	let (outbound_tx, mut outbound_rx) =
@@ -71,7 +74,7 @@ pub(crate) fn create_connection_manager(
 		loop {
 			select! {
 				Some(msg) = connection.inbound.recv() => {
-					println!("Received from voice server: {:#?}", msg);
+					// println!("Received from voice server: {:#?}", msg);
 					match msg {
 						VoiceConnMessage::Ping { seq } => {
 							if let Some((want_seq, respond_to)) = last_ping_respond_to.take() {
@@ -94,10 +97,19 @@ pub(crate) fn create_connection_manager(
 						}
 						VoiceConnMessage::Rtp(data) => {
 							// TODO: Handle receiving RTP packets
+							let ssrc = data.ssrc();
+							let mut data = data.into_raw();
+							let mut crypt = crypt.lock();
+							if let Some((header_length, total_length)) = crypt.decrypt_in_place(&mut data) {
+								info!(logger, "Received RTP packet. Header length: {header_length}, Total length: {total_length}, Ssrc: {ssrc}");
+							}
+							else {
+								warn!(logger, "Failed to decrypt RTP packet. Ssrc: {ssrc}");
+							}
 						}}
 				},
 				Some(msg) = outbound_rx.recv() => {
-					println!("Received message to send out: {:#?}", msg);
+					// println!("Received message to send out: {:#?}", msg);
 					match msg {
 						ConnectionManagerMessage::Ping { seq, respond_to } => {
 							last_ping_respond_to = Some((seq, respond_to));
@@ -186,7 +198,7 @@ pub(crate) fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> 
 					let msg: Result<VoiceConnMessage, _> = data.try_into();
 					match msg {
 						Ok(msg) => {
-							info!(logger, "Received {:#?}", msg);
+							// info!(logger, "Received {:#?}", msg);
 							if let Err(e) = inbound_tx.send(msg) {
 								warn!(logger, "Failed to send message to manager: {e}");
 							}
@@ -197,7 +209,6 @@ pub(crate) fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> 
 					}
 				}
 				else => {
-					warn!(logger, "Connection task ended");
 					break;
 				}
 			}

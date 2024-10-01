@@ -8,7 +8,14 @@
 #![warn(unused_variables)]
 #![warn(unused_imports)]
 
+mod crypt;
 use engine::SyncVoiceEngine;
+
+#[allow(unused_imports)]
+pub(crate) use parking_lot::{
+	RwLock as SyncRwLock, RwLockReadGuard as SyncRwLockReadGuard,
+	RwLockWriteGuard as SyncRwLockWriteGuard,
+};
 
 #[allow(unused_imports)]
 pub(crate) use parking_lot::{
@@ -19,7 +26,9 @@ pub(crate) use parking_lot::{
 pub(crate) use parking_lot::{MappedReentrantMutexGuard, ReentrantMutex, ReentrantMutexGuard};
 
 #[allow(unused_imports)]
-pub(crate) use tokio::sync::{MappedMutexGuard as MappedAsyncMutexGuard, Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
+pub(crate) use tokio::sync::{
+	MappedMutexGuard as MappedAsyncMutexGuard, Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard,
+};
 
 mod engine;
 use engine::VoiceEngine;

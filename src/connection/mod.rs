@@ -1,12 +1,18 @@
 mod manager;
-mod structures;
+pub mod structures;
 
 use manager::{ConnectionManagerHandle, ConnectionManagerMessage};
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, TryFromInto};
 use structures::IpDiscoveryPacket;
 
-use crate::engine::SyncVoiceEngine;
+use crate::{
+	crypt::{self, VoiceConnectionCrypt},
+	engine::SyncVoiceEngine,
+	SyncMutex,
+};
 
-use std::{cmp, net::Ipv4Addr, str::FromStr, time::Duration};
+use std::{cmp, net::Ipv4Addr, str::FromStr, sync::Arc, time::Duration};
 
 use napi::{
 	bindgen_prelude::Array,
@@ -126,6 +132,7 @@ pub struct VoiceConnection {
 	user_id: String,
 	options: VoiceConnectionOptions,
 	pinger: PingerHandle,
+	crypt: Arc<SyncMutex<VoiceConnectionCrypt>>,
 }
 
 #[napi]
@@ -147,9 +154,14 @@ impl VoiceConnection {
 
 		info!(logger, "Connecting to {}:{}", addr.0, addr.1);
 
+		let crypt = Arc::new(SyncMutex::new(VoiceConnectionCrypt::new()));
+
 		let conn = manager::create_connection(logger.clone(), addr);
-		let conn_manager =
-			manager::create_connection_manager(logger.new(o!("task" => "conn_manager")), conn);
+		let conn_manager = manager::create_connection_manager(
+			logger.new(o!("task" => "conn_manager")),
+			crypt.clone(),
+			conn,
+		);
 
 		discover_ip(
 			logger.new(o!("task" => "ip_discovery")),
@@ -177,7 +189,7 @@ impl VoiceConnection {
 		);
 		let pinger = start_pinger(logger.new(o!("task" => "pinger")), addr, conn_manager.clone());
 
-		Ok(Self { logger, user_id, options, pinger })
+		Ok(Self { logger, user_id, options, pinger, crypt })
 	}
 
 	#[napi]
@@ -292,37 +304,37 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn set_no_input_callback(&self, callback: JsFunction) {
+	pub fn set_no_input_callback(&self, _callback: JsFunction) {
 		info!(self.logger, "setNoInputCallback called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_no_input_threshold(&self, threshold: f64) {
+	pub fn set_no_input_threshold(&self, _threshold: f64) {
 		info!(self.logger, "setNoInputThreshold called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_on_first_frame_callback(&self, callback: JsFunction) {
+	pub fn set_on_first_frame_callback(&self, _callback: JsFunction) {
 		info!(self.logger, "setOnFirstFrameCallback called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_on_desktop_source_ended(&self, callback: JsFunction) {
+	pub fn set_on_desktop_source_ended(&self, _callback: JsFunction) {
 		info!(self.logger, "setOnDesktopSourceEnded called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_on_soundshare(&self, callback: JsFunction) {
+	pub fn set_on_soundshare(&self, _callback: JsFunction) {
 		info!(self.logger, "setOnSoundshare called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_on_soundshare_ended(&self, callback: JsFunction) {
+	pub fn set_on_soundshare_ended(&self, _callback: JsFunction) {
 		info!(self.logger, "setOnSoundshareEnded called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_on_soundshare_failed(&self, callback: JsFunction) {
+	pub fn set_on_soundshare_failed(&self, _callback: JsFunction) {
 		info!(self.logger, "setOnSoundshareFailed called (UNIMPLEMENTED)");
 	}
 
@@ -386,7 +398,7 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn set_on_video_encoder_fallback_callback(&self, callback: JsFunction) {
+	pub fn set_on_video_encoder_fallback_callback(&self, _callback: JsFunction) {
 		info!(self.logger, "setOnVideoEncoderFallbackCallback called (UNIMPLEMENTED)");
 	}
 
@@ -434,7 +446,7 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn set_ping_timeout_callback(&self, callback: JsFunction) {
+	pub fn set_ping_timeout_callback(&self, _callback: JsFunction) {
 		info!(self.logger, "setPingTimeoutCallback called (UNIMPLEMENTED)");
 	}
 
@@ -449,32 +461,49 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn set_rtc_log_marker(&self, marker: String) {
+	pub fn set_rtc_log_marker(&self, _marker: String) {
 		info!(self.logger, "setRtcLogMarker called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_self_deafen(&self, deafen: bool) {
+	pub fn set_self_deafen(&self, _deafen: bool) {
 		info!(self.logger, "setSelfDeafen called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_self_mute(&self, mute: bool) {
+	pub fn set_self_mute(&self, _mute: bool) {
 		info!(self.logger, "setSelfMute called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_transport_options(&self) {
-		info!(self.logger, "setTransportOptions called (UNIMPLEMENTED)");
+	pub fn set_transport_options(&self, env: Env, transport_options: JsObject) -> napi::Result<()> {
+		info!(self.logger, "setTransportOptions called (PARTIALLY IMPLEMENTED)");
+
+		let transport_options: TransportOptions = env.from_js_value(&transport_options)?;
+
+		if let Some(settings) = transport_options.encryption_settings {
+			info!(self.logger, "Encryption settings provided");
+			let mut crypt = self.crypt.lock();
+			if (settings.secret_key.len() != crypt::constants::KEY_BYTES) {
+				warn!(self.logger, "Invalid key length provided");
+				return Err(napi::Error::from_reason("Invalid key length"));
+			}
+			crypt.set_key(settings.secret_key.as_slice().try_into().unwrap());
+			crypt.set_mode(settings.mode);
+		} else {
+			warn!(self.logger, "No encryption settings provided");
+		}
+
+		Ok(())
 	}
 
 	#[napi]
-	pub fn set_video_broadcast(&self, broadcast: bool) {
+	pub fn set_video_broadcast(&self, _broadcast: bool) {
 		info!(self.logger, "setVideoBroadcast called (UNIMPLEMENTED)");
 	}
 
 	#[napi]
-	pub fn set_encryption(&self, encryption: JsUnknown) {
+	pub fn set_encryption(&self, _encryption: JsUnknown) {
 		info!(self.logger, "setEncryption called (UNIMPLEMENTED)");
 	}
 
@@ -518,6 +547,8 @@ impl VoiceConnection {
 	}
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct InputModeOptions {
 	vad_auto_threshold: f64,
 	vad_leading: f64,
@@ -526,7 +557,9 @@ pub(crate) struct InputModeOptions {
 	vad_use_krisp: bool,
 }
 
-pub(crate) struct TransportOptions {
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AltTransportOptions {
 	input_mode: f64,
 	input_mode_options: Option<InputModeOptions>,
 	remote_sink_wants_max_framerate: f64,
@@ -544,6 +577,23 @@ pub(crate) struct TransportOptions {
 	encoding_video_min_bit_rate: f64,
 	encoding_video_width: f64,
 	remote_sink_wants_pixel_count: f64,
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EncryptionTransportOptions {
+	#[serde_as(as = "TryFromInto<String>")]
+	pub mode: crypt::Mode,
+	pub secret_key: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TransportOptions {
+	#[serde(flatten)]
+	pub alt_transport_options: Option<AltTransportOptions>,
+	pub encryption_settings: Option<EncryptionTransportOptions>,
 }
 
 #[napi(object)]

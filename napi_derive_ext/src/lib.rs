@@ -57,12 +57,29 @@ pub fn module_interface(_attr: TokenStream, item: TokenStream) -> TokenStream {
 				return None;
 			}
 
-			if fun.attrs.iter().any(|attr| {
-				attr.path().is_ident("module_interface")
-					&& attr.parse_args::<syn::Ident>().unwrap() == "no_bind"
-			}) {
-				return None;
+			let mut napi_attr: Option<proc_macro2::TokenStream> = None;
+
+			if let Some(attr) =
+				fun.attrs.iter().find(|attr| attr.path().is_ident("module_interface"))
+			{
+				attr.parse_nested_meta(|meta| {
+					if meta.path.is_ident("napi") {
+						let path = meta.path;
+						let remaining = meta.input.cursor().token_stream();
+						napi_attr = Some(quote::quote! { #path #remaining });
+					};
+					Ok(())
+				})
+				// TODO: fix this, why is it returning an error when it's seemingly working fine?
+				.unwrap_or(());
 			}
+
+			let napi_attr = match napi_attr {
+				Some(attr) => attr,
+				None => {
+					return None;
+				}
+			};
 
 			let name = &fun.sig.ident;
 			let params: Punctuated<_, Comma> = fun
@@ -140,7 +157,7 @@ pub fn module_interface(_attr: TokenStream, item: TokenStream) -> TokenStream {
 			// };
 
 			Some(quote::quote! {
-				#[napi_derive::napi]
+				#[#napi_attr]
 				#vis fn #name (mut env: Env, #params) #return_type {
 					let app = #struct_name::instance(env);
 					#struct_name::#name(app, #param_names_only)

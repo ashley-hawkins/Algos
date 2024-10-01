@@ -98,73 +98,165 @@ impl From<IpDiscoveryPacket> for Vec<u8> {
 }
 
 #[derive(Debug)]
-pub struct RtpPacket(pub Vec<u8>);
+pub struct RtpExtension<'a> {
+	id: u16,
+	payload: &'a [u8],
+}
 
-impl RtpPacket {
-	pub fn into_raw(self) -> Vec<u8> {
-		self.0
+impl RtpExtension<'_> {
+	pub fn id(&self) -> u16 {
+		self.id
 	}
 
-	pub fn version(&self) -> u8 {
-		self.0[0] >> 6 & 0b11
+	pub fn payload(&self) -> &[u8] {
+		self.payload
 	}
 
-	pub fn padding(&self) -> bool {
-		self.0[0] >> 5 & 0b1 == 1
+	pub fn len(&self) -> usize {
+		4 + self.payload.len()
+	}
+}
+
+pub trait RtpPacketTrait {
+	fn data(&self) -> &[u8];
+
+	fn version(&self) -> u8 {
+		self.data()[0] >> 6 & 0b11
 	}
 
-	pub fn extension(&self) -> bool {
-		self.0[0] >> 4 & 0b1 == 1
+	fn padding(&self) -> bool {
+		self.data()[0] >> 5 & 0b1 == 1
 	}
 
-	pub fn csrc_count(&self) -> u8 {
-		self.0[0] & 0b1111
+	fn has_extension(&self) -> bool {
+		self.data()[0] >> 4 & 0b1 == 1
 	}
 
-	pub fn marker(&self) -> bool {
-		self.0[1] >> 7 & 0b1 == 1
+	fn extension(&self) -> Option<RtpExtension> {
+		let has_extension = self.has_extension();
+		if !has_extension {
+			return None;
+		}
+
+		let fixed_header_length = self.get_fixed_header_length();
+
+		if self.data().len() < fixed_header_length + 4 {
+			return None;
+		}
+		let id = u16::from_be_bytes([
+			self.data()[fixed_header_length],
+			self.data()[fixed_header_length + 1],
+		]);
+		let length = u16::from_be_bytes([
+			self.data()[fixed_header_length + 2],
+			self.data()[fixed_header_length + 3],
+		]);
+
+		if self.data().len() < fixed_header_length + 4 + length as usize {
+			return None;
+		}
+
+		let offset = fixed_header_length + 4;
+		Some(RtpExtension { id, payload: &self.data()[offset..(offset + length as usize)] })
 	}
 
-	pub fn payload_type(&self) -> u8 {
-		self.0[1] & 0b1111111
+	fn csrc_count(&self) -> u8 {
+		self.data()[0] & 0b1111
 	}
 
-	pub fn sequence_number(&self) -> u16 {
-		u16::from_be_bytes([self.0[2], self.0[3]])
+	fn marker(&self) -> bool {
+		self.data()[1] >> 7 & 0b1 == 1
 	}
 
-	pub fn timestamp(&self) -> u32 {
-		u32::from_be_bytes([self.0[4], self.0[5], self.0[6], self.0[7]])
+	fn payload_type(&self) -> u8 {
+		self.data()[1] & 0b1111111
 	}
 
-	pub fn ssrc(&self) -> u32 {
-		u32::from_be_bytes([self.0[8], self.0[9], self.0[10], self.0[11]])
+	fn sequence_number(&self) -> u16 {
+		u16::from_be_bytes([self.data()[2], self.data()[3]])
 	}
 
-	pub fn csrc(&self, index: u8) -> Result<u32, ()> {
+	fn timestamp(&self) -> u32 {
+		u32::from_be_bytes([self.data()[4], self.data()[5], self.data()[6], self.data()[7]])
+	}
+
+	fn ssrc(&self) -> u32 {
+		u32::from_be_bytes([self.data()[8], self.data()[9], self.data()[10], self.data()[11]])
+	}
+
+	fn csrc(&self, index: u8) -> Result<u32, ()> {
 		if index >= self.csrc_count() {
 			return Err(());
 		}
 
 		let offset = 12 + index as usize * 4;
 		Ok(u32::from_be_bytes([
-			self.0[offset],
-			self.0[offset + 1],
-			self.0[offset + 2],
-			self.0[offset + 3],
+			self.data()[offset],
+			self.data()[offset + 1],
+			self.data()[offset + 2],
+			self.data()[offset + 3],
 		]))
 	}
 
-	pub fn get_total_length(&self) -> usize {
+	fn get_fixed_header_length(&self) -> usize {
 		12 + self.csrc_count() as usize * size_of::<u32>()
 	}
 
-	pub fn get_payload(&self) -> &[u8] {
-		&self.0[self.get_total_length()..]
+	fn get_total_header_length(&self) -> usize {
+		self.get_fixed_header_length() + self.extension().map_or(0, |x| x.len())
 	}
 
-	pub fn is_rtcp(&self) -> bool {
+	fn get_payload(&self) -> &[u8] {
+		&self.data()[self.get_fixed_header_length()..]
+	}
+
+	fn is_rtcp(&self) -> bool {
 		self.payload_type() >= 72 && self.payload_type() <= 76
+	}
+
+	fn is_valid(&self) -> bool {
+		let raw_data_len = self.data().len();
+
+		if raw_data_len < 12 {
+			return false;
+		}
+
+		if self.version() != 2 {
+			return false;
+		}
+
+		if self.is_rtcp() {
+			return false;
+		}
+
+		if self.has_extension() && self.extension().is_none() {
+			return false;
+		}
+
+		if raw_data_len < self.get_total_header_length() {
+			return false;
+		}
+
+		true
+	}
+}
+
+#[derive(Debug)]
+pub struct RtpPacket(Vec<u8>);
+
+impl RtpPacket {
+	pub fn new(data: Vec<u8>) -> Self {
+		Self(data)
+	}
+
+	pub fn into_raw(self) -> Vec<u8> {
+		self.0
+	}
+}
+
+impl RtpPacketTrait for RtpPacket {
+	fn data(&self) -> &[u8] {
+		&self.0
 	}
 }
 
@@ -172,21 +264,38 @@ impl TryFrom<&[u8]> for RtpPacket {
 	type Error = ();
 
 	fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-		if value.len() < 12 {
-			return Err(());
-		}
-
 		let res = Self(value.to_vec());
 
-		if res.version() != 2 {
+		if !res.is_valid() {
 			return Err(());
 		}
 
-		if res.is_rtcp() {
-			return Err(());
-		}
+		Ok(res)
+	}
+}
 
-		if res.get_total_length() > value.len() {
+#[derive(Debug, Clone, Copy)]
+pub struct RtpPacketBorrow<'a>(&'a [u8]);
+
+impl<'a> RtpPacketBorrow<'a> {
+	pub fn new(data: &'a [u8]) -> Self {
+		Self(data)
+	}
+}
+
+impl<'a> RtpPacketTrait for RtpPacketBorrow<'a> {
+	fn data(&self) -> &[u8] {
+		self.0
+	}
+}
+
+impl<'a> TryFrom<&'a [u8]> for RtpPacketBorrow<'a> {
+	type Error = ();
+
+	fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
+		let res = Self(value);
+
+		if !res.is_valid() {
 			return Err(());
 		}
 

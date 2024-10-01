@@ -63,18 +63,19 @@ impl VoiceEngine {
 }
 
 pub struct SyncVoiceEngine(SyncMutex<VoiceEngine>);
+
 #[allow(unused)]
-#[module_interface]
+#[napi_derive_ext::module_interface]
 impl SyncVoiceEngine {
-	#[module_interface(no_bind)]
 	pub(crate) fn new(inner: VoiceEngine) -> Self {
 		Self(SyncMutex::new(inner))
 	}
-	#[module_interface(no_bind)]
+
 	pub(crate) fn lock(&self) -> SyncMutexGuard<VoiceEngine> {
 		self.0.lock()
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn initialize(&self, options: EngineOptionsInput) -> Result<()> {
 		let mut this = self.lock();
 		if this.options.is_some() {
@@ -86,50 +87,61 @@ impl SyncVoiceEngine {
 		Ok(())
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_clip_buffer_length(&self, length: f64) {
 		info!(self.lock().logger(), "setClipBufferLength called (UNIMPLEMENTED)"; "length" => length);
 	}
 
-	pub(crate) fn set_emit_v_a_d_level(&self, emit: bool) {
+	#[module_interface(napi(js_name = "setEmitVADLevel"))]
+	pub(crate) fn set_emit_vad_level(&self, emit: bool) {
 		info!(self.lock().logger(), "setEmitVADLevel called (UNIMPLEMENTED)"; "emit" => emit);
 	}
 
-	pub(crate) fn set_emit_v_a_d_level2(&self, emit: bool) {
+	#[module_interface(napi(js_name = "setEmitVADLevel2"))]
+	pub(crate) fn set_emit_vad_level2(&self, emit: bool) {
 		info!(self.lock().logger(), "setEmitVADLevel2 called (UNIMPLEMENTED)"; "emit" => emit);
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_on_voice_callback(&self, callback: JsFunction) {
 		info!(self.lock().logger(), "setOnVoiceCallback called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_loopback(&self, loopback: bool, parameters: JsObject) {
 		info!(self.lock().logger(), "setLoopback called (UNIMPLEMENTED)"; "loopback" => loopback);
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_transport_options(&self, options: JsObject) {
 		// TODO
 		info!(self.lock().logger(), "setTransportOptions called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_device_change_callback(&self, callback: JsFunction) {
 		// TODO
 		info!(self.lock().logger(), "setDeviceChangeCallback called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_output_device(&self, device_id: String) {
 		// TODO
 		info!(self.lock().logger(), "setOutputDevice called (UNIMPLEMENTED)"; "device_id" => device_id);
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_input_device(&self, device_id: String) {
 		// TODO
 		info!(self.lock().logger(), "setInputDevice called (UNIMPLEMENTED)"; "device_id" => device_id);
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_video_input_device(&self, device_id: String) {
 		info!(self.lock().logger(), "setVideoInputDevice called (UNIMPLEMENTED)"; "device_id" => device_id);
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_output_devices(&self, env: Env, callback: JsFunction) -> napi::Result<()> {
 		// TODO
 		info!(self.lock().logger(), "getOutputDevices called (IMPLEMENTED)");
@@ -164,6 +176,7 @@ impl SyncVoiceEngine {
 		Ok(())
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_input_devices(&self, env: Env, callback: JsFunction) -> napi::Result<()> {
 		// TODO
 		info!(self.lock().logger(), "getInputDevices called (IMPLEMENTED)");
@@ -198,6 +211,7 @@ impl SyncVoiceEngine {
 		Ok(())
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_video_input_devices(&self, callback: JsFunction) {
 		info!(self.lock().logger(), "getVideoInputDevices called (HARD-CODED)");
 		let tsfn: ThreadsafeFunction<(), ErrorStrategy::Fatal> = callback
@@ -210,51 +224,63 @@ impl SyncVoiceEngine {
 		});
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_video_output_sink(&self, callback: JsFunction) {
 		info!(self.lock().logger(), "setVideoOutputSink called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn add_direct_video_output_sink(&self, stream_id: String) {
 		info!(self.lock().logger(), "addDirectVideoOutputSink called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn remove_direct_video_output_sink(&self, stream_id: String) {
 		info!(self.lock().logger(), "removeDirectVideoOutputSink called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn signal_video_output_sink_ready(&self, callback: JsFunction) {
 		info!(self.lock().logger(), "signalVideoOutputSinkReady called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_image_data_allocator(&self, allocator: JsFunction) {
 		info!(self.lock().logger(), "setImageDataAllocator called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_input_volume(&self, volume: f64) {
 		info!(self.lock().logger(), "setInputVolume called (UNIMPLEMENTED)"; "volume" => volume);
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_output_volume(&self, volume: f64) {
 		info!(self.lock().logger(), "setOutputVolume called (UNIMPLEMENTED)"; "volume" => volume);
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_volume_change_callback(&self, callback: JsFunction) {
 		info!(self.lock().logger(), "setVolumeChangeCallback called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_no_input_threshold(&self, what: JsFunction) {
 		info!(self.lock().logger(), "setNoInputThreshold called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_no_input_callback(&self, callback: JsFunction) {
 		info!(self.lock().logger(), "setNoInputCallback called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_supported_video_codecs(&self) -> Result<Vec<String>> {
 		info!(self.lock().logger(), "getSupportedVideoCodecs called (UNIMPLEMENTED)");
 		Ok(vec![])
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_codec_capabilities(
 		&self,
 		env: Env,
@@ -266,14 +292,17 @@ impl SyncVoiceEngine {
 		Ok(())
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_codec_survey(&self, what: JsFunction) {
 		info!(self.lock().logger(), "getCodecSurvey called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_experimental_adm(&self, what: JsFunction) {
 		info!(self.lock().logger(), "setExperimentalAdm called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_audio_subsystem(&self, callback: JsFunction) -> napi::Result<()> {
 		info!(self.lock().logger(), "getAudioSubsystem called (HARD-CODED)");
 		let tsfn: ThreadsafeFunction<(), ErrorStrategy::Fatal> = callback
@@ -290,58 +319,72 @@ impl SyncVoiceEngine {
 		Ok(())
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_desktop_sources(&self, what: JsFunction) {
 		info!(self.lock().logger(), "getDesktopSources called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn ping_voice_thread(&self, what: JsFunction) {
 		info!(self.lock().logger(), "pingVoiceThread called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_screen_previews(&self, what: JsFunction) {
 		info!(self.lock().logger(), "getScreenPreviews called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_window_previews(&self, what: JsFunction) {
 		info!(self.lock().logger(), "getWindowPreviews called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn console_log(&self, what: JsFunction) {
 		info!(self.lock().logger(), "consoleLog called (UNPLANNED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn write_audio_debug_state(&self, what: JsFunction) {
 		info!(self.lock().logger(), "writeAudioDebugState called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_aec_dump(&self, dump: bool) {
 		info!(self.lock().logger(), "setAecDump called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn rank_rtc_regions(&self, what: JsFunction) {
 		info!(self.lock().logger(), "rankRtcRegions called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn get_soundshare_status(&self, what: JsFunction) {
 		info!(self.lock().logger(), "getSoundshareStatus called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn enable_soundshare(&self, what: JsFunction) {
 		info!(self.lock().logger(), "enableSoundshare called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_video_input_initialization_callback(&self, what: JsFunction) {
 		info!(self.lock().logger(), "setVideoInputInitializationCallback called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn apply_media_filter_settings(&self, what: JsFunction) {
 		info!(self.lock().logger(), "applyMediaFilterSettings called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn apply_media_filter_settings_with_callback(&self, what: JsFunction) {
 		info!(self.lock().logger(), "applyMediaFilterSettingsWithCallback called (UNIMPLEMENTED)");
 	}
 
+	#[module_interface(napi)]
 	pub(crate) fn set_max_sync_delay_override(&self, what: JsFunction) {
 		info!(self.lock().logger(), "setMaxSyncDelayOverride called (UNIMPLEMENTED)");
 	}
