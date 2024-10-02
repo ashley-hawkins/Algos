@@ -1,5 +1,6 @@
 use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
+use cpal::traits::{DeviceTrait, HostTrait};
 use slog::{info, warn};
 use tokio::{net::UdpSocket, select, sync::oneshot, time::timeout};
 
@@ -71,6 +72,7 @@ pub(crate) fn create_connection_manager(
 	tokio::spawn(async move {
 		let mut last_ping_respond_to: Option<(u8, oneshot::Sender<()>)> = None;
 		let mut last_ip_discovery_respond_to: Option<oneshot::Sender<IpDiscoveryPacket>> = None;
+
 		loop {
 			select! {
 				Some(msg) = connection.inbound.recv() => {
@@ -98,12 +100,28 @@ pub(crate) fn create_connection_manager(
 						VoiceConnMessage::Rtp(data) => {
 							// TODO: Handle receiving RTP packets
 							let ssrc = data.ssrc();
-							let mut data = data.into_raw();
+							let csrc_count = data.csrc_count();
+							let ext = data.extension();
+							let has_ext = ext.is_some();
+							let ext_id = ext.as_ref().map(| value | value.id());
+							let ext_len = ext.as_ref().map(| value | value.len());
+							let ext_payload = ext.as_ref().map(| value | value.payload().to_owned());
+							let payload_type = data.payload_type();
+							let data_original = data.into_raw();
+							let mut data = data_original.clone();
 							let mut crypt = crypt.lock();
 							if let Some((header_length, total_length)) = crypt.decrypt_in_place(&mut data) {
-								info!(logger, "Received RTP packet. Header length: {header_length}, Total length: {total_length}, Ssrc: {ssrc}");
-							}
-							else {
+								info!(logger, "Received RTP packet. Header length: {header_length}, Total length: {total_length}, Ssrc: {ssrc}, Packet type: {payload_type}");
+								if(payload_type == 120) {
+									let mut decoder = opus::Decoder::new(48000, opus::Channels::Stereo).unwrap();
+									let mut output = [0; 5760 * 2];
+									match decoder.decode(&data[header_length..total_length], &mut output,false) {
+											Ok(_) => { info!(logger, "Decoded opus packet: {ssrc} {csrc_count} {total_length} {header_length} {has_ext} {ext_id:?} {ext_len:?} {ext_payload:?} Data: {data:?} Data Original: {data_original:?}"); },
+											Err(e) => { warn!(logger, "Failed to decode opus packet: {e}; {ssrc} {csrc_count} {total_length} {header_length} {has_ext} {ext_id:?} {ext_len:?} {ext_payload:?} Data: {data:?} Data Original: {data_original:?}"); },
+									};
+									info!(logger, "Decoded audio packet: {}", output.len());
+								}
+							} else {
 								warn!(logger, "Failed to decrypt RTP packet. Ssrc: {ssrc}");
 							}
 						}}

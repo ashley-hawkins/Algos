@@ -490,6 +490,7 @@ impl VoiceConnection {
 			}
 			crypt.set_key(settings.secret_key.as_slice().try_into().unwrap());
 			crypt.set_mode(settings.mode);
+			info!(self.logger, "Secret key: {:?}", settings.secret_key);
 		} else {
 			warn!(self.logger, "No encryption settings provided");
 		}

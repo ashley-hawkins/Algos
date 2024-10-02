@@ -113,7 +113,7 @@ impl RtpExtension<'_> {
 	}
 
 	pub fn len(&self) -> usize {
-		4 + self.payload.len()
+		4 + self.payload.len() * 4
 	}
 }
 
