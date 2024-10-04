@@ -9,15 +9,11 @@ pub struct AudioThreadUser {
 	user_id: u64,
 	draining: bool,
 	common: Arc<UserCommon>,
-	reader: ringbuf::HeapCons<(f32, f32)>,
+	reader: ringbuf::HeapCons<f32>,
 }
 
 impl AudioThreadUser {
-	pub fn new(
-		user_id: u64,
-		common: Arc<UserCommon>,
-		reader: ringbuf::HeapCons<(f32, f32)>,
-	) -> Self {
+	pub fn new(user_id: u64, common: Arc<UserCommon>, reader: ringbuf::HeapCons<f32>) -> Self {
 		Self { user_id, draining: false, common, reader }
 	}
 }
@@ -69,7 +65,7 @@ impl AudioThreadState {
 		for user in self.users.iter_mut() {
 			let available = user.reader.occupied_len();
 
-			if available > 8192 {
+			if available > 5760 * 2 {
 				user.draining = true;
 			}
 			if (available < data.len() * 2) {
@@ -80,13 +76,12 @@ impl AudioThreadState {
 				continue;
 			}
 
-			let mut our_data = [(0.0, 0.0); 8192 * 2];
+			let mut our_data = [0.0; 5760 * 2 * 10];
 
 			let data_amount = user.reader.pop_slice(&mut our_data);
 
-			for (dst, src) in data.chunks_exact_mut(2).zip(&our_data[..data_amount]) {
-				dst[0] += src.0;
-				dst[1] += src.1;
+			for (dst, src) in data.iter_mut().zip(&our_data[..data_amount]) {
+				*dst += src;
 			}
 		}
 	}
