@@ -1,18 +1,31 @@
-mod manager;
-pub mod structures;
-
-use manager::{ConnectionManagerHandle, ConnectionManagerMessage};
+use cpal::{
+	traits::{DeviceTrait, HostTrait, StreamTrait},
+	Stream,
+};
+use ringbuf::traits::Split;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TryFromInto};
-use structures::IpDiscoveryPacket;
 
 use crate::{
 	crypt::{self, VoiceConnectionCrypt},
 	engine::SyncVoiceEngine,
+	voice_connection::{
+		audio_thread::AudioThreadState,
+		connection_manager::ConnectionManager,
+		udp_connection,
+		user_manager::{UserInitialData, UserManager, UserManagerMessage},
+	},
 	SyncMutex,
 };
 
-use std::{cmp, net::Ipv4Addr, str::FromStr, sync::Arc, time::Duration};
+use std::{
+	cell::RefCell,
+	cmp,
+	net::Ipv4Addr,
+	str::FromStr,
+	sync::{atomic::AtomicU32, Arc},
+	time::Duration,
+};
 
 use napi::{
 	bindgen_prelude::Array,
@@ -26,6 +39,12 @@ use slog::{info, o, warn};
 use tokio::{
 	sync::{oneshot, watch},
 	time::timeout,
+};
+
+use super::{
+	connection_manager::{ConnectionManagerHandle, ConnectionManagerMessage},
+	structures::IpDiscoveryPacket,
+	user_manager::UserManagerHandle,
 };
 
 type PingCallback = ThreadsafeFunction<(i64, u8), ErrorStrategy::Fatal>;
@@ -91,9 +110,8 @@ fn start_pinger(
 				.outbound
 				.send(ConnectionManagerMessage::Ping { seq, respond_to: sender })
 			{
-				warn!(logger, "Failed to send ping message: {e}");
-				tokio::time::sleep(Duration::from_secs(5)).await;
-				continue;
+				warn!(logger, "Failed to send ping message, pinger will now exit.");
+				break;
 			}
 
 			let interval = *ping_interval_rx.borrow();
@@ -132,7 +150,9 @@ pub struct VoiceConnection {
 	user_id: String,
 	options: VoiceConnectionOptions,
 	pinger: PingerHandle,
+	user_manager: UserManagerHandle,
 	crypt: Arc<SyncMutex<VoiceConnectionCrypt>>,
+	stream: Stream,
 }
 
 #[napi]
@@ -156,12 +176,15 @@ impl VoiceConnection {
 
 		let crypt = Arc::new(SyncMutex::new(VoiceConnectionCrypt::new()));
 
-		let conn = manager::create_connection(logger.clone(), addr);
-		let conn_manager = manager::create_connection_manager(
-			logger.new(o!("task" => "conn_manager")),
-			crypt.clone(),
-			conn,
-		);
+		let (audio_thread, audio_callback) = AudioThreadState::create_callback();
+
+		let user_manager = UserManager::new(audio_thread).start();
+
+		let conn = udp_connection::create_connection(logger.clone(), addr);
+
+		let conn_manager =
+			ConnectionManager::new(logger.new(o!("task" => "conn_manager")), crypt.clone())
+				.start(conn, user_manager.clone());
 
 		discover_ip(
 			logger.new(o!("task" => "ip_discovery")),
@@ -189,7 +212,23 @@ impl VoiceConnection {
 		);
 		let pinger = start_pinger(logger.new(o!("task" => "pinger")), addr, conn_manager.clone());
 
-		Ok(Self { logger, user_id, options, pinger, crypt })
+		let dev = cpal::default_host().default_output_device().unwrap();
+		let mut config = dev.default_output_config().unwrap().config();
+		config.channels = 2;
+
+		let stream = dev
+			.build_output_stream(
+				&config,
+				audio_callback,
+				move |err| {
+					eprintln!("an error occurred on stream: {}", err);
+				},
+				None,
+			)
+			.unwrap();
+		stream.play().unwrap();
+
+		Ok(Self { logger, user_id, options, pinger, user_manager, crypt, stream })
 	}
 
 	#[napi]
@@ -254,8 +293,19 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn merge_users(&self, users: JsObject) {
+	pub fn merge_users(&self, env: Env, users: JsObject) -> napi::Result<()> {
 		info!(self.logger, "mergeUsers called (UNIMPLEMENTED)");
+
+		let users: Vec<UserInitialData> = env.from_js_value(&users)?;
+
+		info!(self.logger, "users: {users:#?}");
+
+
+		self.user_manager.message_sender().send(UserManagerMessage::MergeUsers(users)).map_err(
+			|e| napi::Error::from_reason(format!("Encountered an error while merging users: {e}")),
+		)?;
+
+		Ok(())
 	}
 
 	#[napi]

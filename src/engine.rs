@@ -1,6 +1,6 @@
 use crate::drains::{DrainExt, JsWriter};
 use crate::{SyncMutex, SyncMutexGuard};
-use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use napi::bindgen_prelude::ValidateNapiValue;
 use napi::NapiValue;
 use napi::{

@@ -1,4 +1,4 @@
-use crate::connection::structures::{RtpPacket, RtpPacketBorrow, RtpPacketTrait};
+use crate::voice_connection::structures::{RtpPacketBorrow, RtpPacketTrait};
 
 use alkali::mem::FullAccess;
 use alkali::symmetric::aead;
@@ -109,6 +109,8 @@ pub mod constants {
 	pub const MAC_BYTES: usize = 16;
 }
 
+// TODO: Refactor so that the only inherent state is next_suffix.
+// I want this because the other state comes from elsewhere in the code whereas next_suffix is managed internally to the struct.
 pub struct VoiceConnectionCrypt {
 	next_suffix: u32,
 	key: [u8; constants::KEY_BYTES],

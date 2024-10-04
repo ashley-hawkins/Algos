@@ -33,7 +33,7 @@ pub(crate) use tokio::sync::{
 mod engine;
 use engine::VoiceEngine;
 
-mod connection;
+mod voice_connection;
 
 mod drains;
 
