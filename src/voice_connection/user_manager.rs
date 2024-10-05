@@ -17,14 +17,14 @@ pub struct UserCommon {
 pub struct User {
 	user_id: u64,
 	common: Arc<UserCommon>,
-	writer: ringbuf::HeapProd<f32>,
+	writer: rtrb::Producer<f32>,
 }
 
 impl User {
 	pub fn create_pair(user_id: u64, ssrc: u32) -> (User, AudioThreadUser) {
 		let common = Arc::new(UserCommon { ssrc: AtomicU32::new(0), volume: AtomicU32::new(100) });
 
-		let (rb_tx, rb_rx) = ringbuf::HeapRb::<f32>::new(5760 * 2 * 10).split();
+		let (rb_tx, rb_rx) = rtrb::RingBuffer::new(5760 * 2 * 10);
 
 		(
 			User { user_id, common: common.clone(), writer: rb_tx },
@@ -154,7 +154,7 @@ impl UserManager {
 					let writer = &mut user.writer;
 
 					//writer.push_iter(data.chunks_exact(2).map(|chunk| (chunk[0], chunk[1])));
-					writer.push_slice(data.as_slice());
+					writer.write_chunk_uninit(data.len()).unwrap().fill_from_iter(data.into_iter());
 				}
 			}
 		}

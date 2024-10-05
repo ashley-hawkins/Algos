@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{cmp, hint::black_box, sync::Arc, time::Instant};
 
-use cpal::OutputCallbackInfo;
+use cpal::{OutputCallbackInfo, StreamInstant};
 use ringbuf::traits::{Consumer, Observer};
 
 use super::user_manager::UserCommon;
@@ -9,11 +9,11 @@ pub struct AudioThreadUser {
 	user_id: u64,
 	draining: bool,
 	common: Arc<UserCommon>,
-	reader: ringbuf::HeapCons<f32>,
+	reader: rtrb::Consumer<f32>,
 }
 
 impl AudioThreadUser {
-	pub fn new(user_id: u64, common: Arc<UserCommon>, reader: ringbuf::HeapCons<f32>) -> Self {
+	pub fn new(user_id: u64, common: Arc<UserCommon>, reader: rtrb::Consumer<f32>) -> Self {
 		Self { user_id, draining: false, common, reader }
 	}
 }
@@ -37,13 +37,14 @@ impl AudioThreadHandle {
 
 pub struct AudioThreadState {
 	users: Vec<AudioThreadUser>,
+	progress: f32,
 }
 
 impl AudioThreadState {
 	pub fn create_callback() -> (AudioThreadHandle, impl FnMut(&mut [f32], &OutputCallbackInfo)) {
 		let (message_sender, message_receiver) = flume::bounded(256);
 
-		let mut this = Self { users: Vec::new() };
+		let mut this = Self { users: Vec::new(), progress: 0.0 };
 
 		(AudioThreadHandle { message_sender }, move |data, info| {
 			this.data_callback(&message_receiver, data, info)
@@ -56,19 +57,40 @@ impl AudioThreadState {
 		data: &mut [f32],
 		callback_info: &OutputCallbackInfo,
 	) {
+		const SAMPLE_RATE: f32 = 48_000.0;
+		const DELTA_T: f32 = 1.0 / SAMPLE_RATE;
+		const FREQ: f32 = 880.0;
+		const AMPLITUDE: f32 = 0.1;
+
 		message_receiver.try_iter().for_each(|message| self.process_message(message));
 
 		for sample in data.iter_mut() {
 			*sample = 0.0;
 		}
 
-		for user in self.users.iter_mut() {
-			let available = user.reader.occupied_len();
+		// progress through one second
+		let mut prog = self.progress;
 
+		for (samples) in data.chunks_exact_mut(2) {
+			let a = AMPLITUDE * (prog * std::f32::consts::PI * FREQ).sin();
+
+			samples[0] = a;
+			samples[1] = a;
+
+			prog = (prog + DELTA_T) % 1.0;
+		}
+
+		self.progress = prog;
+
+		let wanted = data.len();
+
+		for user in self.users.iter_mut() {
+			let available = user.reader.slots();
 			if available > 5760 * 2 {
 				user.draining = true;
 			}
-			if (available < data.len() * 2) {
+
+			if available < wanted {
 				user.draining = false;
 			}
 
@@ -76,13 +98,9 @@ impl AudioThreadState {
 				continue;
 			}
 
-			let mut our_data = [0.0; 5760 * 2 * 10];
-
-			let data_amount = user.reader.pop_slice(&mut our_data);
-
-			for (dst, src) in data.iter_mut().zip(&our_data[..data_amount]) {
+			user.reader.read_chunk(data.len()).unwrap().into_iter().zip(data.iter_mut()).for_each(|(src, dst)| {
 				*dst += src;
-			}
+			});
 		}
 	}
 

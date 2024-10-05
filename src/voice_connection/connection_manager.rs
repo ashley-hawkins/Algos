@@ -54,6 +54,7 @@ impl ConnectionManager {
 						self.process_outbound_message(msg, &mut connection);
 					},
 					else => {
+						info!(self.logger, "Connection manager closed.");
 						break;
 					}
 				}
@@ -110,7 +111,7 @@ impl ConnectionManager {
 							Ok(len) => {
 								// info!(self.logger, "Decoded opus packet: {ssrc} {csrc_count} {total_length} {header_length} {has_ext} {ext_id:?} {ext_len:?} {ext_payload:?} Data: {data:?} Data Original: {data_original:?}");
 								let the_user =
-									user_manager.message_sender().send(UserManagerMessage::Audio(ssrc, output.to_vec()));
+									user_manager.message_sender().send(UserManagerMessage::Audio(ssrc, output[..(len * 2)].to_vec()));
 							}
 							Err(e) => {
 								warn!(self.logger, "Failed to decode opus packet: {e}; {ssrc} {csrc_count} {total_length} {header_length} {has_ext} {ext_id:?} {ext_len:?} {ext_payload:?} Data: {data:?} Data Original: {data_original:?}");

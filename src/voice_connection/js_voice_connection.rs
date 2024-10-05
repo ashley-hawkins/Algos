@@ -1,6 +1,6 @@
 use cpal::{
 	traits::{DeviceTrait, HostTrait, StreamTrait},
-	Stream,
+	Stream, SupportedBufferSize,
 };
 use ringbuf::traits::Split;
 use serde::{Deserialize, Serialize};
@@ -213,8 +213,19 @@ impl VoiceConnection {
 		let pinger = start_pinger(logger.new(o!("task" => "pinger")), addr, conn_manager.clone());
 
 		let dev = cpal::default_host().default_output_device().unwrap();
-		let mut config = dev.default_output_config().unwrap().config();
+		let supported_config = dev.default_output_config().unwrap();
+		let mut config = supported_config.config();
 		config.channels = 2;
+		config.sample_rate = cpal::SampleRate(48000);
+
+		// if let SupportedBufferSize::Range { min, max } = supported_config.buffer_size() {
+		// 	let mut max = *max;
+		// 	if (max == u32::MAX) {
+		// 		max = 48000 / 100;
+		// 	}
+
+		// 	config.buffer_size = cpal::BufferSize::Fixed(max);
+		// }
 
 		let stream = dev
 			.build_output_stream(
@@ -299,7 +310,6 @@ impl VoiceConnection {
 		let users: Vec<UserInitialData> = env.from_js_value(&users)?;
 
 		info!(self.logger, "users: {users:#?}");
-
 
 		self.user_manager.message_sender().send(UserManagerMessage::MergeUsers(users)).map_err(
 			|e| napi::Error::from_reason(format!("Encountered an error while merging users: {e}")),
