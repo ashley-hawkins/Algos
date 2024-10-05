@@ -3,7 +3,7 @@ use std::sync::{
 	Arc,
 };
 
-use ringbuf::traits::{Producer, Split};
+use rtrb::CopyToUninit;
 use serde::Deserialize;
 use serde_with::serde_as;
 
@@ -18,16 +18,24 @@ pub struct User {
 	user_id: u64,
 	common: Arc<UserCommon>,
 	writer: rtrb::Producer<f32>,
+
+	decoder: opus::Decoder,
 }
 
 impl User {
 	pub fn create_pair(user_id: u64, ssrc: u32) -> (User, AudioThreadUser) {
-		let common = Arc::new(UserCommon { ssrc: AtomicU32::new(ssrc), volume: AtomicU32::new(100) });
+		let common =
+			Arc::new(UserCommon { ssrc: AtomicU32::new(ssrc), volume: AtomicU32::new(100) });
 
-		let (rb_tx, rb_rx) = rtrb::RingBuffer::new(5760 * 2 * 10);
+		let (rb_tx, rb_rx) = rtrb::RingBuffer::new(48000 * 2 * 5);
 
 		(
-			User { user_id, common: common.clone(), writer: rb_tx },
+			User {
+				user_id,
+				common: common.clone(),
+				writer: rb_tx,
+				decoder: opus::Decoder::new(48000, opus::Channels::Stereo).unwrap(),
+			},
 			AudioThreadUser::new(user_id, common, rb_rx),
 		)
 	}
@@ -55,7 +63,7 @@ impl UserManagerHandle {
 pub enum UserManagerMessage {
 	MergeUsers(Vec<UserInitialData>),
 	DestroyUser(u64),
-	Audio(u32, Vec<f32>),
+	Audio(u32, Vec<u8>),
 }
 
 #[serde_as]
@@ -151,10 +159,27 @@ impl UserManager {
 					.iter_mut()
 					.find(|user| user.common().ssrc.load(atomic::Ordering::SeqCst) == ssrc)
 				{
+					let mut output = [0.0; 5760 * 2];
+
 					let writer = &mut user.writer;
 
-					//writer.push_iter(data.chunks_exact(2).map(|chunk| (chunk[0], chunk[1])));
-					writer.write_chunk_uninit(data.len()).unwrap().fill_from_iter(data.into_iter());
+					match user.decoder.decode_float(&data, &mut output, false) {
+						Ok(len) => {
+							let len = len * 2;
+							if let Ok(mut chunk) = writer.write_chunk_uninit(len) {
+								let (first, second) = chunk.as_mut_slices();
+								let mid = first.len();
+								output[..mid].copy_to_uninit(first);
+								output[mid..len].copy_to_uninit(second);
+								// SAFETY: All slots have been initialized
+								unsafe { chunk.commit_all() };
+							}
+						}
+						Err(e) => {
+							panic!("Sneed to handle this error");
+							// warn!(self.logger, "Failed to decode opus packet: {e}; {ssrc} {csrc_count} {total_length} {header_length} {has_ext} {ext_id:?} {ext_len:?} {ext_payload:?} Data: {data:?} Data Original: {data_original:?}");
+						}
+					};
 				}
 			}
 		}

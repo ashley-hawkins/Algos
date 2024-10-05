@@ -1,8 +1,6 @@
-use crate::drains::{DrainExt, JsWriter};
+use crate::drains::JsWriter;
 use crate::{SyncMutex, SyncMutexGuard};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use napi::bindgen_prelude::ValidateNapiValue;
-use napi::NapiValue;
+use cpal::traits::{DeviceTrait, HostTrait};
 use napi::{
 	threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
 	tokio, Env, JsFunction, JsObject, Result,

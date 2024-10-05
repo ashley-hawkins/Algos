@@ -1,8 +1,7 @@
 use cpal::{
 	traits::{DeviceTrait, HostTrait, StreamTrait},
-	Stream, SupportedBufferSize,
+	Stream,
 };
-use ringbuf::traits::Split;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TryFromInto};
 
@@ -19,11 +18,10 @@ use crate::{
 };
 
 use std::{
-	cell::RefCell,
 	cmp,
 	net::Ipv4Addr,
 	str::FromStr,
-	sync::{atomic::AtomicU32, Arc},
+	sync::Arc,
 	time::Duration,
 };
 

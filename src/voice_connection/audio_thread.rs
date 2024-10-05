@@ -1,7 +1,6 @@
-use std::{cmp, hint::black_box, sync::Arc, time::Instant};
+use std::sync::Arc;
 
-use cpal::{OutputCallbackInfo, StreamInstant};
-use ringbuf::traits::{Consumer, Observer};
+use cpal::OutputCallbackInfo;
 
 use super::user_manager::UserCommon;
 
@@ -55,7 +54,7 @@ impl AudioThreadState {
 		&mut self,
 		message_receiver: &flume::Receiver<AudioThreadMessage>,
 		data: &mut [f32],
-		callback_info: &OutputCallbackInfo,
+		_callback_info: &OutputCallbackInfo,
 	) {
 		const SAMPLE_RATE: f32 = 48_000.0;
 		const DELTA_T: f32 = 1.0 / SAMPLE_RATE;
@@ -98,9 +97,11 @@ impl AudioThreadState {
 				continue;
 			}
 
-			user.reader.read_chunk(data.len()).unwrap().into_iter().zip(data.iter_mut()).for_each(|(src, dst)| {
-				*dst += src;
-			});
+			user.reader.read_chunk(data.len()).unwrap().into_iter().zip(data.iter_mut()).for_each(
+				|(src, dst)| {
+					*dst += src;
+				},
+			);
 		}
 	}
 

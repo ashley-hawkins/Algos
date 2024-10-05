@@ -6,10 +6,12 @@ use tokio::{select, sync::oneshot};
 use super::{
 	structures::{IpDiscoveryPacket, RtpPacket, RtpPacketTrait},
 	udp_connection::{ConnectionHandle, VoiceConnMessage},
-	user_manager::{User, UserManagerHandle},
+	user_manager::UserManagerHandle,
 };
 
-use crate::{crypt::VoiceConnectionCrypt, voice_connection::user_manager::UserManagerMessage, SyncMutex};
+use crate::{
+	crypt::VoiceConnectionCrypt, voice_connection::user_manager::UserManagerMessage, SyncMutex,
+};
 
 #[derive(Debug)]
 pub enum ConnectionManagerMessage {
@@ -32,15 +34,14 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
 	pub(crate) fn new(logger: slog::Logger, crypt: Arc<SyncMutex<VoiceConnectionCrypt>>) -> Self {
-		Self {
-			crypt,
-			logger,
-			last_ping_respond_to: None,
-			last_ip_discovery_respond_to: None,
-		}
+		Self { crypt, logger, last_ping_respond_to: None, last_ip_discovery_respond_to: None }
 	}
 
-	pub(crate) fn start(mut self, mut connection: ConnectionHandle, mut user_manager: UserManagerHandle) -> ConnectionManagerHandle {
+	pub(crate) fn start(
+		mut self,
+		mut connection: ConnectionHandle,
+		mut user_manager: UserManagerHandle,
+	) -> ConnectionManagerHandle {
 		let (outbound_tx, mut outbound_rx) =
 			tokio::sync::mpsc::unbounded_channel::<ConnectionManagerMessage>();
 		tokio::spawn(async move {
@@ -63,7 +64,11 @@ impl ConnectionManager {
 		ConnectionManagerHandle { outbound: outbound_tx }
 	}
 
-	fn process_inbound_message(&mut self, msg: VoiceConnMessage, user_manager: &mut UserManagerHandle) {
+	fn process_inbound_message(
+		&mut self,
+		msg: VoiceConnMessage,
+		user_manager: &mut UserManagerHandle,
+	) {
 		match msg {
 			VoiceConnMessage::Ping { seq } => {
 				if let Some((want_seq, respond_to)) = self.last_ping_respond_to.take() {
@@ -86,39 +91,27 @@ impl ConnectionManager {
 			}
 			VoiceConnMessage::Rtp(data) => {
 				// TODO: Handle receiving RTP packets
-				let ssrc = data.ssrc();
-				let csrc_count = data.csrc_count();
-				let ext = data.extension();
-				let has_ext = ext.is_some();
-				let ext_id = ext.as_ref().map(|value| value.id());
-				let ext_len = ext.as_ref().map(|value| value.len());
-				let ext_payload = ext.as_ref().map(|value| value.payload().to_owned());
 				let payload_type = data.payload_type();
-				let data_original = data.into_raw();
-				let mut data = data_original.clone();
+
+				if payload_type != 120 {
+					return;
+				}
+
+				let ssrc = data.ssrc();
+				let mut data = data.into_raw();
+
 				let mut crypt = self.crypt.lock();
 				if let Some((header_length, total_length)) = crypt.decrypt_in_place(&mut data) {
 					// info!(self.logger, "Received RTP packet. Header length: {header_length}, Total length: {total_length}, Ssrc: {ssrc}, Packet type: {payload_type}");
-					if (payload_type == 120) {
-						let mut decoder =
-							opus::Decoder::new(48000, opus::Channels::Stereo).unwrap();
-						let mut output = [0.0; 5760 * 2];
-						match decoder.decode_float(
-							&data[header_length..total_length],
-							&mut output,
-							false,
-						) {
-							Ok(len) => {
-								// info!(self.logger, "Decoded opus packet: {ssrc} {csrc_count} {total_length} {header_length} {has_ext} {ext_id:?} {ext_len:?} {ext_payload:?} Data: {data:?} Data Original: {data_original:?}");
-								let the_user =
-									user_manager.message_sender().send(UserManagerMessage::Audio(ssrc, output[..(len * 2)].to_vec()));
-							}
-							Err(e) => {
-								warn!(self.logger, "Failed to decode opus packet: {e}; {ssrc} {csrc_count} {total_length} {header_length} {has_ext} {ext_id:?} {ext_len:?} {ext_payload:?} Data: {data:?} Data Original: {data_original:?}");
-							}
-						};
-						// info!(self.logger, "Decoded audio packet: {}", output.len());
-					}
+
+					let the_user = user_manager
+						.message_sender()
+						// TODO: this is probably not super efficient idk
+						.send(UserManagerMessage::Audio(
+							ssrc,
+							data[header_length..total_length].to_vec(),
+						));
+					// info!(self.logger, "Decoded audio packet: {}", output.len());
 				} else {
 					warn!(self.logger, "Failed to decrypt RTP packet. Ssrc: {ssrc}");
 				}
