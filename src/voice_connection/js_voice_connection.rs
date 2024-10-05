@@ -423,7 +423,7 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn set_on_speaking_while_muted_callback(&self, callback: JsFunction) {
+	pub fn set_on_speaking_while_muted_callback(&self, _callback: JsFunction) {
 		info!(self.logger, "setOnSpeakingWhileMutedCallback called (UNIMPLEMENTED)");
 	}
 

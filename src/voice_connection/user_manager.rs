@@ -22,7 +22,7 @@ pub struct User {
 
 impl User {
 	pub fn create_pair(user_id: u64, ssrc: u32) -> (User, AudioThreadUser) {
-		let common = Arc::new(UserCommon { ssrc: AtomicU32::new(0), volume: AtomicU32::new(100) });
+		let common = Arc::new(UserCommon { ssrc: AtomicU32::new(ssrc), volume: AtomicU32::new(100) });
 
 		let (rb_tx, rb_rx) = rtrb::RingBuffer::new(5760 * 2 * 10);
 

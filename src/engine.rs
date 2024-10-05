@@ -19,24 +19,24 @@ pub struct VoiceEngine {
 impl VoiceEngine {
 	pub(crate) fn new(mut env: Env) -> Result<Self> {
 		// TODO: Cursed...
-		let file_path = dirs::home_dir()
-			.and_then(|mut path| path.join("algos.log").to_str().map(|s| s.to_owned()))
-			.unwrap_or_else(|| "algos.log".to_owned());
+		// let file_path = dirs::home_dir()
+		// 	.and_then(|mut path| path.join("algos.log").to_str().map(|s| s.to_owned()))
+		// 	.unwrap_or_else(|| "algos.log".to_owned());
 
-		let file_rotator = file_rotate::FileRotate::new(
-			file_path,
-			file_rotate::suffix::AppendCount::new(5),
-			file_rotate::ContentLimit::BytesSurpassed(8 * 1024 * 1024),
-			file_rotate::compression::Compression::OnRotate(4),
-			None,
-		);
-		let decorator = slog_term::PlainSyncDecorator::new(file_rotator);
-		let drain1 = slog_term::FullFormat::new(decorator).build().fuse();
-		let drain1 = slog_async::Async::new(drain1).build().fuse();
+		// let file_rotator = file_rotate::FileRotate::new(
+		// 	file_path,
+		// 	file_rotate::suffix::AppendCount::new(5),
+		// 	file_rotate::ContentLimit::BytesSurpassed(8 * 1024 * 1024),
+		// 	file_rotate::compression::Compression::OnRotate(4),
+		// 	None,
+		// );
+		// let decorator = slog_term::PlainSyncDecorator::new(file_rotator);
+		// let drain1 = slog_term::FullFormat::new(decorator).build().fuse();
+		// let drain1 = slog_async::Async::new(drain1).build().fuse();
 
-		let decorator = slog_term::TermDecorator::new().build();
-		let drain2 = slog_term::FullFormat::new(decorator).build().fuse();
-		let drain2 = slog_async::Async::new(drain2).build().fuse();
+		// let decorator = slog_term::TermDecorator::new().build();
+		// let drain2 = slog_term::FullFormat::new(decorator).build().fuse();
+		// let drain2 = slog_async::Async::new(drain2).build().fuse();
 
 		let js_writer = JsWriter::new(
 			env,
@@ -49,9 +49,9 @@ impl VoiceEngine {
 		let drain3 = slog_term::FullFormat::new(decorator).build().fuse();
 		let drain3 = slog_async::Async::new(drain3).build().fuse();
 
-		let drain = drain1.combine(drain2).combine(drain3).fuse();
+		// let drain = drain1.combine(drain2).combine(drain3).fuse();
 
-		let root_logger = slog::Logger::root(drain, o!("class" => "VoiceEngine"));
+		let root_logger = slog::Logger::root(drain3, o!("class" => "VoiceEngine"));
 		info!(root_logger, "Initialized"; "pid" => std::process::id());
 
 		Ok(Self { root_logger, options: None })
