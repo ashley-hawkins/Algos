@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 [dependencies]
 alkali = { version = "0.3.0", path = "alkali", features = ["aes"] }
 byteorder = "1.5.0"
-cpal = { version = "0.15.3", features = ["asio", "jack"] }
+cpal = { version = "0.15.3", path = "cpal", features = ["asio", "jack"] }
 dashmap = "6.1.0"
 derivative = "2.2.0"
 dirs = "5.0.1"
@@ -38,6 +38,7 @@ slog = "2.7.0"
 slog-async = "2.8.0"
 slog-term = "2.9.1"
 static_assertions_next = "1.1.2"
+strum = { version = "0.26.3", features = ["derive"] }
 tokio = { version = "1.40.0", features = [
     "macros",
     "net",
@@ -45,6 +46,7 @@ tokio = { version = "1.40.0", features = [
     "sync",
     "time",
 ] }
+tokio-util = "0.7.12"
 
 [build-dependencies]
 napi-build = "2.0.1"

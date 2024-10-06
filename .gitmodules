@@ -1,3 +1,6 @@
 [submodule "alkali"]
 	path = alkali
 	url = git@ssh.kaydax.xyz:w/alkali.git
+[submodule "cpal"]
+	path = cpal
+	url = https://github.com/RustAudio/cpal.git

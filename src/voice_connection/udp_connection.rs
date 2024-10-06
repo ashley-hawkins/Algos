@@ -91,6 +91,7 @@ pub(crate) fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> 
 						Ok(_) => {}
 						Err(e) => {
 							warn!(logger, "Failed to send message: {e}");
+							continue;
 						}
 					};
 				}
@@ -108,11 +109,12 @@ pub(crate) fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> 
 						Ok(msg) => {
 							// info!(logger, "Received {:#?}", msg);
 							if let Err(e) = inbound_tx.send(msg) {
-								warn!(logger, "Failed to send message to manager: {e}");
+								warn!(logger, "Failed to send message to manager: {e}. Closing connection.");
+								break;
 							}
 						}
 						Err(_) => {
-							info!(logger, "Received invalid message from {}", addr);
+							info!(logger, "Received invalid message of length {} from {}", data.len(), addr);
 						}
 					}
 				}

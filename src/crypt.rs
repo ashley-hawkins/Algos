@@ -12,7 +12,7 @@ enum NonceType {
 	Suffix,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, strum::EnumIter)]
 #[repr(u32)]
 pub enum Mode {
 	XSalsa20Poly1305,

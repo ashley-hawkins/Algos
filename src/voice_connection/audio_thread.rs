@@ -56,10 +56,10 @@ impl AudioThreadState {
 		data: &mut [f32],
 		_callback_info: &OutputCallbackInfo,
 	) {
-		const SAMPLE_RATE: f32 = 48_000.0;
-		const DELTA_T: f32 = 1.0 / SAMPLE_RATE;
-		const FREQ: f32 = 880.0;
-		const AMPLITUDE: f32 = 0.1;
+		// const SAMPLE_RATE: f32 = 48_000.0;
+		// const DELTA_T: f32 = 1.0 / SAMPLE_RATE;
+		// const FREQ: f32 = 880.0;
+		// const AMPLITUDE: f32 = 0.1;
 
 		message_receiver.try_iter().for_each(|message| self.process_message(message));
 
@@ -67,19 +67,20 @@ impl AudioThreadState {
 			*sample = 0.0;
 		}
 
-		// progress through one second
-		let mut prog = self.progress;
+		// sanity check by playing a sine wave
+		// // progress through one second
+		// let mut prog = self.progress;
 
-		for (samples) in data.chunks_exact_mut(2) {
-			let a = AMPLITUDE * (prog * std::f32::consts::PI * FREQ).sin();
+		// for (samples) in data.chunks_exact_mut(2) {
+		// 	let a = AMPLITUDE * (prog * std::f32::consts::PI * FREQ).sin();
 
-			samples[0] = a;
-			samples[1] = a;
+		// 	samples[0] = a;
+		// 	samples[1] = a;
 
-			prog = (prog + DELTA_T) % 1.0;
-		}
+		// 	prog = (prog + DELTA_T) % 1.0;
+		// }
 
-		self.progress = prog;
+		// self.progress = prog;
 
 		let wanted = data.len();
 
