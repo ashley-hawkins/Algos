@@ -1,3 +1,4 @@
+use algos_core::voice_connection::PingerHandle;
 use cpal::{
 	traits::{DeviceTrait, HostTrait, StreamTrait},
 	Stream,
@@ -19,13 +20,7 @@ use crate::{
 	SyncMutex,
 };
 
-use std::{
-	cmp,
-	net::Ipv4Addr,
-	str::FromStr,
-	sync::Arc,
-	time::Duration,
-};
+use std::{net::Ipv4Addr, str::FromStr, sync::Arc};
 
 use napi::{
 	bindgen_prelude::Array,
@@ -36,127 +31,11 @@ use napi::{
 };
 use napi_derive::napi;
 use slog::{info, o, warn};
-use tokio::{
-	select,
-	sync::{oneshot, watch},
-	time::timeout,
-};
 
-use super::{
-	connection_manager::{ConnectionManagerHandle, ConnectionManagerMessage},
-	structures::IpDiscoveryPacket,
-	user_manager::UserManagerHandle,
-};
+use crate::voice_connection::user_manager::UserManagerHandle;
 
 type PingCallback = ThreadsafeFunction<(i64, u8), ErrorStrategy::Fatal>;
 type IpDiscoveredCallback = ThreadsafeFunction<(Ipv4Addr, u16), ErrorStrategy::Fatal>;
-
-fn discover_ip(
-	logger: slog::Logger,
-	ssrc: u32,
-	connection_manager: ConnectionManagerHandle,
-	callback: IpDiscoveredCallback,
-) {
-	tokio::spawn(async move {
-		loop {
-			let (sender, receiver) = oneshot::channel();
-			if let Err(e) =
-				connection_manager.outbound.send(ConnectionManagerMessage::IpDiscovery {
-					data: IpDiscoveryPacket::new_send_ssrc(ssrc),
-					respond_to: sender,
-				}) {
-				warn!(logger, "Failed to send IP discovery message. Ending discovery.");
-				break;
-			}
-
-			let res = timeout(Duration::from_secs(1), receiver).await;
-			match res {
-				Ok(Ok(packet)) => {
-					tokio::time::sleep(Duration::from_millis(250)).await;
-					info!(logger, "Discovered IP: {:#?}", packet.ip());
-					callback.call(
-						(*packet.ip(), packet.port()),
-						ThreadsafeFunctionCallMode::NonBlocking,
-					);
-					break;
-				}
-				Ok(Err(e)) => {
-					warn!(logger, "Failed to receive IP discovery response. Ending discovery.");
-					break;
-				}
-				_ => {
-					warn!(logger, "Failed to discover IP, trying again in 5 seconds.");
-					tokio::time::sleep(Duration::from_secs(5)).await;
-				}
-			}
-		}
-	});
-}
-
-struct PingerHandle {
-	ping_callback: watch::Sender<Option<PingCallback>>,
-	ping_interval: watch::Sender<i64>,
-}
-
-fn start_pinger(
-	logger: slog::Logger,
-	addr: (Ipv4Addr, u16),
-	conn_manager: ConnectionManagerHandle,
-	cancellation_token: CancellationToken,
-) -> PingerHandle {
-	let (ping_interval_tx, ping_interval_rx) = watch::channel(5000);
-	let (ping_callback_tx, ping_callback_rx) = watch::channel::<Option<PingCallback>>(None);
-
-	tokio::spawn(async move {
-		let mut seq = 0u8;
-		loop {
-			let (sender, receiver) = oneshot::channel();
-			if let Err(e) = conn_manager
-				.outbound
-				.send(ConnectionManagerMessage::Ping { seq, respond_to: sender })
-			{
-				warn!(logger, "Failed to send ping message, pinger will now exit.");
-				break;
-			}
-
-			let interval = *ping_interval_rx.borrow();
-			let current_time = std::time::Instant::now();
-
-			let res = select! {
-				res = timeout(Duration::from_millis(interval as u64), receiver) => {
-					res
-				}
-				_ = cancellation_token.cancelled() => {
-					break;
-				}
-			};
-
-			let elapsed = current_time.elapsed().as_millis() as i64;
-
-			match res {
-				Ok(Ok(_)) | Err(_) => {
-					if res.is_err() {
-						warn!(logger, "Ping response timed out");
-					}
-					let callback = ping_callback_rx.borrow().clone();
-					if let Some(callback) = callback {
-						let _ = callback.call((elapsed, 0), ThreadsafeFunctionCallMode::Blocking);
-					}
-				}
-				Ok(Err(e)) => {
-					warn!(logger, "Ping response was dropped, either means a ping was sent from somewhere else or the voice connection was destroyed. The former should never happen.");
-				}
-			}
-
-			let remaining_wait = cmp::max(interval - elapsed, 0);
-			tokio::time::sleep(Duration::from_millis(remaining_wait as u64)).await;
-
-			seq = seq.wrapping_add(1);
-		}
-	});
-
-	PingerHandle { ping_callback: ping_callback_tx, ping_interval: ping_interval_tx }
-}
 
 struct VoiceConnectionInner {
 	logger: slog::Logger,
@@ -200,32 +79,40 @@ impl VoiceConnectionInner {
 			ConnectionManager::new(logger.new(o!("task" => "conn_manager")), crypt.clone())
 				.start(conn, user_manager.clone());
 
-		discover_ip(
+		algos_core::voice_connection::discover_ip(
 			logger.new(o!("task" => "ip_discovery")),
 			options.ssrc,
 			conn_manager.clone(),
-			callback.create_threadsafe_function(
-				0,
-				|ctx: ThreadSafeCallContext<(Ipv4Addr, u16)>| {
-					let (address, port) = ctx.value;
-					let mut connection_info = ctx.env.create_object()?;
-					connection_info.set_named_property(
-						"address",
-						ctx.env.create_string(&address.to_string())?,
-					)?;
-					connection_info
-						.set_named_property("port", ctx.env.create_uint32(port as u32)?)?;
-					connection_info
-						.set_named_property("protocol", ctx.env.create_string("udp")?)?;
-					Ok(vec![
-						ctx.env.create_string("")?.into_unknown(),
-						connection_info.into_unknown(),
-					])
-				},
-			)?,
+			{
+				let tsfn: IpDiscoveredCallback = callback.create_threadsafe_function(
+					0,
+					|ctx: ThreadSafeCallContext<(Ipv4Addr, u16)>| {
+						let (address, port) = ctx.value;
+						let mut connection_info = ctx.env.create_object()?;
+						connection_info.set_named_property(
+							"address",
+							ctx.env.create_string(&address.to_string())?,
+						)?;
+						connection_info
+							.set_named_property("port", ctx.env.create_uint32(port as u32)?)?;
+						connection_info
+							.set_named_property("protocol", ctx.env.create_string("udp")?)?;
+						Ok(vec![
+							ctx.env.create_string("")?.into_unknown(),
+							connection_info.into_unknown(),
+						])
+					},
+				)?;
+				move |packet| {
+					tsfn.call(
+						(*packet.ip(), packet.port()),
+						ThreadsafeFunctionCallMode::NonBlocking,
+					);
+				}
+			},
 		);
 
-		let pinger = start_pinger(
+		let pinger = algos_core::voice_connection::start_pinger(
 			logger.new(o!("task" => "pinger")),
 			addr,
 			conn_manager.clone(),
@@ -312,7 +199,7 @@ impl VoiceConnectionInner {
 	pub fn get_filtered_stats(
 		&self,
 		env: Env,
-		filter: f64,
+		_filter: f64,
 		callback: JsFunction,
 	) -> napi::Result<()> {
 		// info!(self.logger, "getFilteredStats called (PARTIALLY IMPLEMENTED)");
@@ -349,7 +236,7 @@ impl VoiceConnectionInner {
 		info!(self.logger, "setClipRecordSsrc called (UNIMPLEMENTED)");
 	}
 
-	pub fn set_desktop_source_status_callback(&self, callback: JsFunction) {
+	pub fn set_desktop_source_status_callback(&self, _callback: JsFunction) {
 		info!(self.logger, "setDesktopSourceStatusCallback called (UNIMPLEMENTED)");
 	}
 
@@ -369,11 +256,31 @@ impl VoiceConnectionInner {
 		info!(self.logger, "setLocalPan called (UNIMPLEMENTED)");
 	}
 
-	pub fn set_local_volume(&self, user_id: String, volume: f64) {
+	pub fn set_local_volume(&self, user_id: String, volume: f32) -> napi::Result<()> {
+		// // Inverse the volume transformation done by the client
+		// let volume = (10.0 * volume.log10() + 50.0) / 50.0;
+
+		// // Apply our own transformation
+		// let volume = volume.powi(3);
+
 		info!(
 			self.logger,
-			"setLocalVolume called (UNIMPLEMENTED) for user {user_id} with volume {volume}"
+			"setLocalVolume called (IMPLEMENTED) for user {user_id} with volume {volume}"
 		);
+
+		self.user_manager
+			.message_sender()
+			.send(UserManagerMessage::SetVolume(
+				user_id.parse().map_err(|e| {
+					napi::Error::from_reason(format!("Failed to parse user ID: {e}"))
+				})?,
+				volume,
+			))
+			.map_err(|e| {
+				napi::Error::from_reason(format!("Encountered an error while setting volume: {e}"))
+			})?;
+
+		Ok(())
 	}
 
 	pub fn set_minimum_output_delay(&self) {
@@ -475,18 +382,24 @@ impl VoiceConnectionInner {
 		info!(self.logger, "setPingCallback called (UNIMPLEMENTED)");
 		self.pinger
 			.ping_callback
-			.send(Some(callback.create_threadsafe_function(
-				0,
-				|ctx: ThreadSafeCallContext<(i64, u8)>| {
-					let (interval, seq) = ctx.value;
-					Ok(vec![
-						ctx.env.create_int64(interval)?.into_unknown(),
-						ctx.env.create_string("")?.into_unknown(),
-						ctx.env.create_uint32(0)?.into_unknown(),
-						ctx.env.create_uint32(seq as u32)?.into_unknown(),
-					])
-				},
-			)?))
+			.send(Some({
+				let tsfn: PingCallback = callback.create_threadsafe_function(
+					0,
+					|ctx: ThreadSafeCallContext<(i64, u8)>| {
+						let (interval, seq) = ctx.value;
+						Ok(vec![
+							ctx.env.create_int64(interval)?.into_unknown(),
+							ctx.env.create_string("")?.into_unknown(),
+							ctx.env.create_uint32(0)?.into_unknown(),
+							ctx.env.create_uint32(seq as u32)?.into_unknown(),
+						])
+					},
+				)?;
+
+				Box::new(move |interval, seq| {
+					tsfn.call((interval, seq), ThreadsafeFunctionCallMode::NonBlocking);
+				})
+			}))
 			.map_err(|e| {
 				napi::Error::from_reason(format!(
 					"Encountered an error while setting ping callback: {e}"
@@ -725,10 +638,12 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn set_local_volume(&self, user_id: String, volume: f64) {
+	pub fn set_local_volume(&self, user_id: String, volume: f64) -> napi::Result<()> {
 		if let Some(inner) = self.inner.as_ref() {
-			inner.set_local_volume(user_id, volume);
+			inner.set_local_volume(user_id, volume as f32)?;
 		}
+
+		Ok(())
 	}
 
 	#[napi]

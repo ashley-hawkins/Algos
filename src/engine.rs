@@ -1,5 +1,6 @@
 use crate::drains::JsWriter;
 use crate::{SyncMutex, SyncMutexGuard};
+
 use cpal::traits::{DeviceTrait, HostTrait};
 use napi::{
 	threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},

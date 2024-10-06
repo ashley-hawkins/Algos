@@ -3,6 +3,7 @@ use std::sync::{
 	Arc,
 };
 
+use atomic_float::AtomicF32;
 use rtrb::CopyToUninit;
 use serde::Deserialize;
 use serde_with::serde_as;
@@ -11,7 +12,7 @@ use super::audio_thread::{self, AudioThreadHandle, AudioThreadUser};
 
 pub struct UserCommon {
 	pub ssrc: AtomicU32,
-	pub volume: AtomicU32,
+	pub volume: AtomicF32,
 }
 
 pub struct User {
@@ -23,9 +24,9 @@ pub struct User {
 }
 
 impl User {
-	pub fn create_pair(user_id: u64, ssrc: u32) -> (User, AudioThreadUser) {
+	pub fn create_pair(user_id: u64, ssrc: u32, vol: f32) -> (User, AudioThreadUser) {
 		let common =
-			Arc::new(UserCommon { ssrc: AtomicU32::new(ssrc), volume: AtomicU32::new(100) });
+			Arc::new(UserCommon { ssrc: AtomicU32::new(ssrc), volume: AtomicF32::new(vol) });
 
 		let (rb_tx, rb_rx) = rtrb::RingBuffer::new(48000 * 2 * 5);
 
@@ -63,9 +64,11 @@ impl UserManagerHandle {
 pub enum UserManagerMessage {
 	MergeUsers(Vec<UserInitialData>),
 	DestroyUser(u64),
+	SetVolume(u64, f32),
 	Audio(u32, Vec<u8>),
 }
 
+#[allow(dead_code)]
 #[serde_as]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,14 +98,14 @@ impl UserManager {
 
 		tokio::spawn(async move {
 			while let Ok(msg) = message_receiver.recv_async().await {
-				self.process_message(msg).await;
+				self.process_message(msg);
 			}
 		});
 
 		UserManagerHandle { message_sender }
 	}
 
-	async fn process_message(&mut self, msg: UserManagerMessage) {
+	fn process_message(&mut self, msg: UserManagerMessage) {
 		match msg {
 			UserManagerMessage::MergeUsers(users) => {
 				let (users, audio_thread_users): (Vec<_>, Vec<_>) = users
@@ -119,7 +122,7 @@ impl UserManager {
 							return None;
 						}
 
-						let pair = User::create_pair(new_user.id, new_user.ssrc);
+						let pair = User::create_pair(new_user.id, new_user.ssrc, new_user.volume);
 						Some(pair)
 					})
 					.unzip();
@@ -131,17 +134,17 @@ impl UserManager {
 					1 => {
 						self.audio_thread
 							.message_sender()
-							.send_async(audio_thread::AudioThreadMessage::AddUser(
+							.send(audio_thread::AudioThreadMessage::AddUser(
 								audio_thread_users.into_iter().next().unwrap(),
 							))
-							.await
+							
 							.expect("Failed to send message to audio thread");
 					}
 					2.. => self
 						.audio_thread
 						.message_sender()
-						.send_async(audio_thread::AudioThreadMessage::AddUsers(audio_thread_users))
-						.await
+						.send(audio_thread::AudioThreadMessage::AddUsers(audio_thread_users))
+						
 						.expect("Failed to send message to audio thread"),
 				}
 			}
@@ -149,9 +152,14 @@ impl UserManager {
 				self.users.retain(|user| user.user_id() != user_id);
 				self.audio_thread
 					.message_sender()
-					.send_async(audio_thread::AudioThreadMessage::RemoveUser(user_id))
-					.await
+					.send(audio_thread::AudioThreadMessage::RemoveUser(user_id))
+					
 					.expect("Failed to send message to audio thread");
+			}
+			UserManagerMessage::SetVolume(user_id, volume) => {
+				if let Some(user) = self.users.iter().find(|user| user.user_id() == user_id) {
+					user.common().volume.store(volume, atomic::Ordering::Relaxed);
+				}
 			}
 			UserManagerMessage::Audio(ssrc, data) => {
 				if let Some(user) = self
@@ -175,7 +183,7 @@ impl UserManager {
 								unsafe { chunk.commit_all() };
 							}
 						}
-						Err(e) => {
+						Err(_e) => {
 							panic!("Sneed to handle this error");
 							// warn!(self.logger, "Failed to decode opus packet: {e}; {ssrc} {csrc_count} {total_length} {header_length} {has_ext} {ext_id:?} {ext_len:?} {ext_payload:?} Data: {data:?} Data Original: {data_original:?}");
 						}

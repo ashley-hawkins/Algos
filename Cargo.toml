@@ -7,20 +7,14 @@ version = "0.0.0"
 crate-type = ["cdylib"]
 
 [dependencies]
-alkali = { version = "0.3.0", path = "alkali", features = ["aes"] }
-byteorder = "1.5.0"
-cpal = { version = "0.15.3", path = "cpal", features = ["asio", "jack"] }
-dashmap = "6.1.0"
+algos_core = { version = "0.1.0", path = "algos_core" }
+cpal = "0.15.3"
 derivative = "2.2.0"
 dirs = "5.0.1"
 file-rotate = "0.7.6"
-flume = "0.11.0"
-im = "15.1.0"
-kanal = "0.1.0-pre8"
-libsodium-sys-stable = "1.21.2"
 # Default enable napi4 feature, see https://nodejs.org/api/n-api.html#node-api-version-matrix
 napi = { version = "2.12.2", default-features = false, features = [
-    "napi8",
+    "napi9",
     "tokio_rt",
     "compat-mode",
     "serde-json",
@@ -28,24 +22,13 @@ napi = { version = "2.12.2", default-features = false, features = [
 # Default enable napi4 feature, see https://nodejs.org/api/n-api.html#node-api-version-matrix
 napi-derive = "2.12.2"
 napi_derive_ext = { version = "0.1.0", path = "napi_derive_ext" }
-opus = "0.3.0"
-parking_lot = "0.12.3"
-pin-utils = "0.1.0"
-rtrb = "0.3.1"
 serde = { version = "1.0.210", features = ["serde_derive"] }
 serde_with = "3.9.0"
 slog = "2.7.0"
 slog-async = "2.8.0"
 slog-term = "2.9.1"
-static_assertions_next = "1.1.2"
 strum = { version = "0.26.3", features = ["derive"] }
-tokio = { version = "1.40.0", features = [
-    "macros",
-    "net",
-    "parking_lot",
-    "sync",
-    "time",
-] }
+tokio = "1.40.0"
 tokio-util = "0.7.12"
 
 [build-dependencies]

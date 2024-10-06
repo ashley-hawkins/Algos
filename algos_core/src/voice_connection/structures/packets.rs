@@ -113,7 +113,7 @@ impl RtpExtension<'_> {
 	}
 
 	pub fn len(&self) -> usize {
-		4 + self.payload.len() * 4
+		4 + self.payload.len()
 	}
 }
 
@@ -143,6 +143,7 @@ pub trait RtpPacketTrait {
 		if self.data().len() < fixed_header_length + 4 {
 			return None;
 		}
+
 		let id = u16::from_be_bytes([
 			self.data()[fixed_header_length],
 			self.data()[fixed_header_length + 1],
@@ -150,9 +151,11 @@ pub trait RtpPacketTrait {
 		let length = u16::from_be_bytes([
 			self.data()[fixed_header_length + 2],
 			self.data()[fixed_header_length + 3],
-		]);
+		]) as usize
+			* 4;
 
-		if self.data().len() < fixed_header_length + 4 + length as usize {
+		let data_len = self.data().len();
+		if data_len < fixed_header_length + 4 + length as usize {
 			return None;
 		}
 
@@ -265,6 +268,7 @@ impl TryFrom<&[u8]> for RtpPacket {
 
 	fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
 		let res = Self(value.to_vec());
+
 
 		if !res.is_valid() {
 			return Err(());

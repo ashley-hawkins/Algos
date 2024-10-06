@@ -47,19 +47,19 @@ impl TryFrom<&[u8]> for VoiceConnMessage {
 	}
 }
 
-pub(crate) struct ConnectionHandle {
-	pub(crate) outbound: tokio::sync::mpsc::UnboundedSender<VoiceConnMessage>,
-	pub(crate) inbound: tokio::sync::mpsc::UnboundedReceiver<VoiceConnMessage>,
+pub struct ConnectionHandle {
+	pub outbound: tokio::sync::mpsc::UnboundedSender<VoiceConnMessage>,
+	pub inbound: tokio::sync::mpsc::UnboundedReceiver<VoiceConnMessage>,
 }
 
-pub(crate) fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> ConnectionHandle {
+pub fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> ConnectionHandle {
 	const UDP_MAX_PACKET_SIZE: usize = u16::MAX as usize; // = 65535
 
 	let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<VoiceConnMessage>();
-	let (mut inbound_tx, inbound_rx) = tokio::sync::mpsc::unbounded_channel();
+	let (inbound_tx, inbound_rx) = tokio::sync::mpsc::unbounded_channel();
 
 	tokio::spawn(async move {
-		let mut sock = Arc::new(
+		let sock = Arc::new(
 			match timeout(Duration::from_secs(10), UdpSocket::bind((Ipv4Addr::from(0), 0))).await {
 				Ok(Ok(conn)) => conn,
 				_ => {
@@ -114,7 +114,7 @@ pub(crate) fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> 
 							}
 						}
 						Err(_) => {
-							info!(logger, "Received invalid message of length {} from {}", data.len(), addr);
+							info!(logger, "Received invalid message: {:?} from {}", data, addr);
 						}
 					}
 				}

@@ -59,9 +59,12 @@ pub fn module_interface(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 			let mut napi_attr: Option<proc_macro2::TokenStream> = None;
 
-			if let Some(attr) =
-				fun.attrs.iter().find(|attr| attr.path().is_ident("module_interface"))
+			let mut attrs = fun.attrs.clone();
+
+			if let Some(idx) =
+				attrs.iter().position(|attr| attr.path().is_ident("module_interface"))
 			{
+				let attr = attrs.remove(idx);
 				attr.parse_nested_meta(|meta| {
 					if meta.path.is_ident("napi") {
 						let path = meta.path;
@@ -73,6 +76,10 @@ pub fn module_interface(_attr: TokenStream, item: TokenStream) -> TokenStream {
 				// TODO: fix this, why is it returning an error when it's seemingly working fine?
 				.unwrap_or(());
 			}
+
+			attrs.retain(|attr| attr.path().is_ident("cfg"));
+
+			let attrs: proc_macro2::TokenStream  = attrs.into_iter().map(|x| x.to_token_stream()).collect();
 
 			let napi_attr = match napi_attr {
 				Some(attr) => attr,
@@ -157,6 +164,7 @@ pub fn module_interface(_attr: TokenStream, item: TokenStream) -> TokenStream {
 			// };
 
 			Some(quote::quote! {
+				#attrs
 				#[#napi_attr]
 				#vis fn #name (mut env: Env, #params) #return_type {
 					let app = #struct_name::instance(env);

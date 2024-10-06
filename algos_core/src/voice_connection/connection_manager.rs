@@ -33,11 +33,11 @@ pub struct ConnectionManager {
 }
 
 impl ConnectionManager {
-	pub(crate) fn new(logger: slog::Logger, crypt: Arc<SyncMutex<VoiceConnectionCrypt>>) -> Self {
+	pub fn new(logger: slog::Logger, crypt: Arc<SyncMutex<VoiceConnectionCrypt>>) -> Self {
 		Self { crypt, logger, last_ping_respond_to: None, last_ip_discovery_respond_to: None }
 	}
 
-	pub(crate) fn start(
+	pub fn start(
 		mut self,
 		mut connection: ConnectionHandle,
 		mut user_manager: UserManagerHandle,
@@ -100,14 +100,14 @@ impl ConnectionManager {
 				let ssrc = data.ssrc();
 				let mut data = data.into_raw();
 
-				let mut crypt = self.crypt.lock();
+				let crypt = self.crypt.lock();
 				if let Some((header_length, total_length)) = crypt.decrypt_in_place(&mut data) {
 					// info!(self.logger, "Received RTP packet. Header length: {header_length}, Total length: {total_length}, Ssrc: {ssrc}, Packet type: {payload_type}");
 
-					let the_user = user_manager
+					let _ = user_manager
 						.message_sender()
 						// TODO: this is probably not super efficient idk
-						.send(UserManagerMessage::Audio(
+						.try_send(UserManagerMessage::Audio(
 							ssrc,
 							data[header_length..total_length].to_vec(),
 						));

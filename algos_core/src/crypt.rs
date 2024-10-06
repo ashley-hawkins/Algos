@@ -15,12 +15,12 @@ enum NonceType {
 #[derive(Clone, Copy, Debug, strum::EnumIter)]
 #[repr(u32)]
 pub enum Mode {
+	AeadAes256GcmRtpSize,
+	AeadAes256Gcm,
 	XSalsa20Poly1305,
 	XSalsa20Poly1305Suffix,
 	XSalsa20Poly1305Lite,
 	XSalsa20Poly1305LiteRtpSize,
-	AeadAes256Gcm,
-	AeadAes256GcmRtpSize,
 	AeadXChaCha20Poly1305RtpSize,
 	Unknown,
 }
@@ -169,7 +169,7 @@ impl VoiceConnectionCrypt {
 					nonce[..constants::NONCE_LITE_BYTES].copy_from_slice(nonce_src)
 				}
 				NonceType::RtpHeader => {
-					let len = std::cmp::min(NONCE_MAX_BYTES, header_length);
+					let len = std::cmp::min(NONCE_MAX_BYTES, cleartext_length);
 					nonce[..len].copy_from_slice(&cleartext[..len])
 				}
 			};

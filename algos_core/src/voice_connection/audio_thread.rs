@@ -41,7 +41,7 @@ pub struct AudioThreadState {
 
 impl AudioThreadState {
 	pub fn create_callback() -> (AudioThreadHandle, impl FnMut(&mut [f32], &OutputCallbackInfo)) {
-		let (message_sender, message_receiver) = flume::bounded(256);
+		let (message_sender, message_receiver) = flume::bounded(2);
 
 		let mut this = Self { users: Vec::new(), progress: 0.0 };
 
@@ -61,7 +61,19 @@ impl AudioThreadState {
 		// const FREQ: f32 = 880.0;
 		// const AMPLITUDE: f32 = 0.1;
 
-		message_receiver.try_iter().for_each(|message| self.process_message(message));
+		// message_receiver.try_iter().for_each(|message| self.process_message(message));
+
+		loop {
+			let x = message_receiver.try_recv();
+
+			match x {
+				Ok(x) => {
+					self.process_message(x);
+				}
+				Err(flume::TryRecvError::Empty) => break,
+				Err(flume::TryRecvError::Disconnected) => panic!(),
+			}
+		}
 
 		for sample in data.iter_mut() {
 			*sample = 0.0;
@@ -86,7 +98,9 @@ impl AudioThreadState {
 
 		for user in self.users.iter_mut() {
 			let available = user.reader.slots();
-			if available > 5760 * 2 {
+			let vol = user.common.volume.load(std::sync::atomic::Ordering::Relaxed).clamp(0.0, 1.0);
+
+			if available > 5760 {
 				user.draining = true;
 			}
 
@@ -100,7 +114,7 @@ impl AudioThreadState {
 
 			user.reader.read_chunk(data.len()).unwrap().into_iter().zip(data.iter_mut()).for_each(
 				|(src, dst)| {
-					*dst += src;
+					*dst += vol * src;
 				},
 			);
 		}
