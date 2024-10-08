@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-alkali = { version = "0.3.0", path = "../alkali", features = ["aes"] }
+aes-gcm = "0.10.3"
 atomic_float = "1.1.0"
 byteorder = "1.5.0"
 cpal = { version = "0.15.3", features = ["asio", "jack"] }

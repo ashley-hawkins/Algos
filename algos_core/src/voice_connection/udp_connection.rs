@@ -5,13 +5,13 @@ use tokio::{net::UdpSocket, select, time::timeout};
 
 use crate::constants;
 
-use super::structures::{IpDiscoveryPacket, RtpPacket};
+use super::structures::IpDiscoveryPacket;
 
 #[derive(Debug)]
 pub enum VoiceConnMessage {
 	Ping { seq: u8 },
 	IpDiscovery(IpDiscoveryPacket),
-	Rtp(RtpPacket),
+	Rtp(Vec<u8>),
 }
 
 impl From<VoiceConnMessage> for Vec<u8> {
@@ -26,7 +26,7 @@ impl From<VoiceConnMessage> for Vec<u8> {
 			}
 
 			VoiceConnMessage::IpDiscovery(data) => data.into(),
-			VoiceConnMessage::Rtp(data) => data.into_raw(),
+			VoiceConnMessage::Rtp(data) => data,
 		}
 	}
 }
@@ -42,7 +42,7 @@ impl TryFrom<&[u8]> for VoiceConnMessage {
 				Ok(VoiceConnMessage::IpDiscovery(value.try_into()?))
 			}
 
-			12.. => Ok(VoiceConnMessage::Rtp(value.try_into()?)),
+			12.. => Ok(VoiceConnMessage::Rtp(value.to_owned())),
 
 			_ => Err(()),
 		}

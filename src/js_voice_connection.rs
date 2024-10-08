@@ -186,10 +186,7 @@ impl VoiceConnectionInner {
 	pub fn get_encryption_modes(&self, env: Env, callback: JsFunction) -> napi::Result<()> {
 		info!(self.logger, "getEncryptionModes called (HARD-CODED)");
 
-		let val = Array::from_ref_vec_string(
-			&env,
-			&crypt::Mode::iter().map(|mode| mode.into()).collect::<Vec<String>>(),
-		)?;
+		let val = Array::from_ref_vec_string(&env, &[VoiceConnectionCrypt::MODE.to_owned()])?;
 
 		callback.call(None, &[val.coerce_to_object()?])?;
 
@@ -457,7 +454,13 @@ impl VoiceConnectionInner {
 				return Err(napi::Error::from_reason("Invalid key length"));
 			}
 			crypt.set_key(settings.secret_key.as_slice().try_into().unwrap());
-			crypt.set_mode(settings.mode);
+
+			if settings.mode != VoiceConnectionCrypt::MODE {
+				warn!(self.logger, "Invalid mode provided");
+				return Err(napi::Error::from_reason("Invalid mode"));
+			}
+
+			// crypt.set_mode(settings.mode);
 			info!(self.logger, "Secret key: {:?}", settings.secret_key);
 		} else {
 			warn!(self.logger, "No encryption settings provided");
@@ -921,7 +924,7 @@ pub(crate) struct AltTransportOptions {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EncryptionTransportOptions {
 	#[serde_as(as = "TryFromInto<String>")]
-	pub mode: crypt::Mode,
+	pub mode: String,
 	pub secret_key: Vec<u8>,
 }
 

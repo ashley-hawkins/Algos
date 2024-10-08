@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use discortp::rtp::{RtpPacket, RtpType};
 use slog::{info, warn};
 use tokio::{select, sync::oneshot};
 
 use super::{
-	structures::{IpDiscoveryPacket, RtpPacket, RtpPacketTrait},
+	structures::IpDiscoveryPacket,
 	udp_connection::{ConnectionHandle, VoiceConnMessage},
 	user_manager::UserManagerHandle,
 };
@@ -18,7 +19,7 @@ use crate::{
 pub enum ConnectionManagerMessage {
 	Ping { seq: u8, respond_to: oneshot::Sender<()> },
 	IpDiscovery { data: IpDiscoveryPacket, respond_to: oneshot::Sender<IpDiscoveryPacket> },
-	Rtp { data: RtpPacket },
+	Rtp { data: Vec<u8> },
 }
 
 #[derive(Clone)]
@@ -90,19 +91,22 @@ impl ConnectionManager {
 					};
 				}
 			}
-			VoiceConnMessage::Rtp(data) => {
-				// TODO: Handle receiving RTP packets
-				let payload_type = data.payload_type();
+			VoiceConnMessage::Rtp(mut data) => {
+				let rtp_packet_view = RtpPacket::new(&data).unwrap();
 
-				if payload_type != 120 {
+				let payload_type = rtp_packet_view.get_payload_type();
+
+				// If this isn't an Opus packet, ignore it
+				if !matches!(payload_type, RtpType::Dynamic(120)) {
 					return;
 				}
 
-				let ssrc = data.ssrc();
-				let mut data = data.into_raw();
+				let ssrc = rtp_packet_view.get_ssrc();
 
-				let crypt = self.crypt.lock();
-				if let Some((header_length, total_length)) = crypt.decrypt_in_place(&mut data) {
+				let mut crypt = self.crypt.lock();
+				if let Some((header_length, total_length)) =
+					crypt.decrypt_in_place(data.as_mut_slice())
+				{
 					// info!(self.logger, "Received RTP packet. Header length: {header_length}, Total length: {total_length}, Ssrc: {ssrc}, Packet type: {payload_type}");
 
 					let _ = user_manager
