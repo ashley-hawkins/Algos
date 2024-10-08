@@ -8,6 +8,8 @@ use rtrb::CopyToUninit;
 use serde::Deserialize;
 use serde_with::serde_as;
 
+use crate::constants;
+
 use super::audio_thread::{self, AudioThreadHandle, AudioThreadUser};
 
 pub struct UserCommon {
@@ -94,7 +96,7 @@ impl UserManager {
 	}
 
 	pub fn start(mut self) -> UserManagerHandle {
-		let (message_sender, message_receiver) = flume::bounded(8);
+		let (message_sender, message_receiver) = flume::bounded(constants::MAIN_CHANNELS_SIZE);
 
 		tokio::spawn(async move {
 			while let Ok(msg) = message_receiver.recv_async().await {
@@ -137,14 +139,12 @@ impl UserManager {
 							.send(audio_thread::AudioThreadMessage::AddUser(
 								audio_thread_users.into_iter().next().unwrap(),
 							))
-							
 							.expect("Failed to send message to audio thread");
 					}
 					2.. => self
 						.audio_thread
 						.message_sender()
 						.send(audio_thread::AudioThreadMessage::AddUsers(audio_thread_users))
-						
 						.expect("Failed to send message to audio thread"),
 				}
 			}
@@ -153,7 +153,6 @@ impl UserManager {
 				self.audio_thread
 					.message_sender()
 					.send(audio_thread::AudioThreadMessage::RemoveUser(user_id))
-					
 					.expect("Failed to send message to audio thread");
 			}
 			UserManagerMessage::SetVolume(user_id, volume) => {

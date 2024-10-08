@@ -1,5 +1,6 @@
 #![feature(inline_const_pat)]
 
+pub mod constants;
 pub mod voice_connection;
 pub mod crypt;
 

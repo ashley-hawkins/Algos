@@ -3,6 +3,8 @@ use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 use slog::{info, warn};
 use tokio::{net::UdpSocket, select, time::timeout};
 
+use crate::constants;
+
 use super::structures::{IpDiscoveryPacket, RtpPacket};
 
 #[derive(Debug)]
@@ -48,15 +50,15 @@ impl TryFrom<&[u8]> for VoiceConnMessage {
 }
 
 pub struct ConnectionHandle {
-	pub outbound: tokio::sync::mpsc::UnboundedSender<VoiceConnMessage>,
-	pub inbound: tokio::sync::mpsc::UnboundedReceiver<VoiceConnMessage>,
+	pub outbound: flume::Sender<VoiceConnMessage>,
+	pub inbound: flume::Receiver<VoiceConnMessage>,
 }
 
 pub fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> ConnectionHandle {
 	const UDP_MAX_PACKET_SIZE: usize = u16::MAX as usize; // = 65535
 
-	let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<VoiceConnMessage>();
-	let (inbound_tx, inbound_rx) = tokio::sync::mpsc::unbounded_channel();
+	let (outbound_tx, outbound_rx) = flume::bounded::<VoiceConnMessage>(constants::MAIN_CHANNELS_SIZE);
+	let (inbound_tx, inbound_rx) = flume::bounded(constants::MAIN_CHANNELS_SIZE);
 
 	tokio::spawn(async move {
 		let sock = Arc::new(
@@ -84,7 +86,7 @@ pub fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> Connect
 		loop {
 			// info!(logger, "Connection task loop iterating");
 			select! {
-				Some(msg) = outbound_rx.recv() => {
+				Ok(msg) = outbound_rx.recv_async() => {
 					info!(logger, "Sending {:#?}", msg);
 					let data: Vec<u8> = msg.into();
 					match sock.send(&data).await {
@@ -108,7 +110,7 @@ pub fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> Connect
 					match msg {
 						Ok(msg) => {
 							// info!(logger, "Received {:#?}", msg);
-							if let Err(e) = inbound_tx.send(msg) {
+							if let Err(e) = inbound_tx.send_async(msg).await {
 								warn!(logger, "Failed to send message to manager: {e}. Closing connection.");
 								break;
 							}

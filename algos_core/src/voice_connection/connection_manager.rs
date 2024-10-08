@@ -10,7 +10,8 @@ use super::{
 };
 
 use crate::{
-	crypt::VoiceConnectionCrypt, voice_connection::user_manager::UserManagerMessage, SyncMutex,
+	constants, crypt::VoiceConnectionCrypt, voice_connection::user_manager::UserManagerMessage,
+	SyncMutex,
 };
 
 #[derive(Debug)]
@@ -22,7 +23,7 @@ pub enum ConnectionManagerMessage {
 
 #[derive(Clone)]
 pub struct ConnectionManagerHandle {
-	pub outbound: tokio::sync::mpsc::UnboundedSender<ConnectionManagerMessage>,
+	pub outbound: flume::Sender<ConnectionManagerMessage>,
 }
 
 pub struct ConnectionManager {
@@ -42,17 +43,17 @@ impl ConnectionManager {
 		mut connection: ConnectionHandle,
 		mut user_manager: UserManagerHandle,
 	) -> ConnectionManagerHandle {
-		let (outbound_tx, mut outbound_rx) =
-			tokio::sync::mpsc::unbounded_channel::<ConnectionManagerMessage>();
+		let (outbound_tx, outbound_rx) =
+			flume::bounded::<ConnectionManagerMessage>(constants::MAIN_CHANNELS_SIZE);
 		tokio::spawn(async move {
 			loop {
 				select! {
-					Some(msg) = connection.inbound.recv() => {
+					Ok(msg) = connection.inbound.recv_async() => {
 						self.process_inbound_message(msg, &mut user_manager);
 					},
-					Some(msg) = outbound_rx.recv() => {
+					Ok(msg) = outbound_rx.recv_async() => {
 						// println!("Received message to send out: {:#?}", msg);
-						self.process_outbound_message(msg, &mut connection);
+						self.process_outbound_message(msg, &mut connection).await;
 					},
 					else => {
 						info!(self.logger, "Connection manager closed.");
@@ -119,7 +120,7 @@ impl ConnectionManager {
 		}
 	}
 
-	fn process_outbound_message(
+	async fn process_outbound_message(
 		&mut self,
 		msg: ConnectionManagerMessage,
 		connection: &mut ConnectionHandle,
@@ -127,18 +128,21 @@ impl ConnectionManager {
 		match msg {
 			ConnectionManagerMessage::Ping { seq, respond_to } => {
 				self.last_ping_respond_to = Some((seq, respond_to));
-				if let Err(e) = connection.outbound.send(VoiceConnMessage::Ping { seq }) {
+				if let Err(e) = connection.outbound.send_async(VoiceConnMessage::Ping { seq }).await
+				{
 					warn!(self.logger, "Failed to send ping message: {e}");
 				};
 			}
 			ConnectionManagerMessage::IpDiscovery { data, respond_to } => {
 				self.last_ip_discovery_respond_to = Some(respond_to);
-				if let Err(e) = connection.outbound.send(VoiceConnMessage::IpDiscovery(data)) {
+				if let Err(e) =
+					connection.outbound.send_async(VoiceConnMessage::IpDiscovery(data)).await
+				{
 					warn!(self.logger, "Failed to send IP discovery message: {e}");
 				}
 			}
 			ConnectionManagerMessage::Rtp { data } => {
-				if let Err(e) = connection.outbound.send(VoiceConnMessage::Rtp(data)) {
+				if let Err(e) = connection.outbound.send_async(VoiceConnMessage::Rtp(data)).await {
 					warn!(self.logger, "Failed to send RTP message: {e}");
 				}
 			}

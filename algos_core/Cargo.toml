@@ -10,7 +10,6 @@ byteorder = "1.5.0"
 cpal = { version = "0.15.3", features = ["asio", "jack"] }
 discortp = "0.6.0"
 flume = "0.11.0"
-kanal = "0.1.0-pre8"
 opus = "0.3.0"
 parking_lot = "0.12.3"
 rtrb = "0.3.1"

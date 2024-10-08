@@ -22,11 +22,15 @@ pub fn discover_ip<F: Fn(IpDiscoveryPacket) + Send + Sync + 'static>(
 	tokio::spawn(async move {
 		loop {
 			let (sender, receiver) = oneshot::channel();
-			if let Err(_) =
-				connection_manager.outbound.send(ConnectionManagerMessage::IpDiscovery {
+			if connection_manager
+				.outbound
+				.send_async(ConnectionManagerMessage::IpDiscovery {
 					data: IpDiscoveryPacket::new_send_ssrc(ssrc),
 					respond_to: sender,
-				}) {
+				})
+				.await
+				.is_err()
+			{
 				warn!(logger, "Failed to send IP discovery message. Ending discovery.");
 				break;
 			}
@@ -71,9 +75,11 @@ pub fn start_pinger(
 		let mut seq = 0u8;
 		loop {
 			let (sender, receiver) = oneshot::channel();
-			if let Err(_) = conn_manager
+			if conn_manager
 				.outbound
-				.send(ConnectionManagerMessage::Ping { seq, respond_to: sender })
+				.send_async(ConnectionManagerMessage::Ping { seq, respond_to: sender })
+				.await
+				.is_err()
 			{
 				warn!(logger, "Failed to send ping message, pinger will now exit.");
 				break;

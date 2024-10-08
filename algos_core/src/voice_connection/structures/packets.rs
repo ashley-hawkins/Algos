@@ -155,12 +155,12 @@ pub trait RtpPacketTrait {
 			* 4;
 
 		let data_len = self.data().len();
-		if data_len < fixed_header_length + 4 + length as usize {
+		if data_len < fixed_header_length + 4 + length {
 			return None;
 		}
 
 		let offset = fixed_header_length + 4;
-		Some(RtpExtension { id, payload: &self.data()[offset..(offset + length as usize)] })
+		Some(RtpExtension { id, payload: &self.data()[offset..(offset + length)] })
 	}
 
 	fn csrc_count(&self) -> u8 {

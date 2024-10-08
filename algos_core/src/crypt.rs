@@ -213,3 +213,9 @@ impl VoiceConnectionCrypt {
 
 	// fn encrypt_in_place(&self, buffer: &mut [u8], packet_length: usize) -> Option<&[u8]> {}
 }
+
+impl Default for VoiceConnectionCrypt {
+	fn default() -> Self {
+		Self::new()
+	}
+}
