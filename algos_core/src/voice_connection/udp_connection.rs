@@ -1,5 +1,9 @@
 use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
+use discortp::{
+	rtp::{RtpExtensionPacket, RtpPacket, RtpType},
+	Packet,
+};
 use slog::{info, warn};
 use tokio::{net::UdpSocket, select, time::timeout};
 
@@ -42,7 +46,27 @@ impl TryFrom<&[u8]> for VoiceConnMessage {
 				Ok(VoiceConnMessage::IpDiscovery(value.try_into()?))
 			}
 
-			12.. => Ok(VoiceConnMessage::Rtp(value.to_owned())),
+			12.. => Ok(VoiceConnMessage::Rtp({
+				let owned = value.to_owned();
+				let rtp_packet_view = RtpPacket::new(owned.as_slice()).unwrap();
+
+				// = It's not RTP
+				if matches!(rtp_packet_view.get_payload_type(), RtpType::Reserved(_)) {
+					return Err(());
+				}
+
+				if rtp_packet_view.get_extension() == 1 {
+					// = Packet is too short to contain an extension
+					let extension = RtpExtensionPacket::new(rtp_packet_view.payload()).ok_or(())?;
+
+					// = Extension length is invalid
+					if extension.get_length() as usize * 4 > extension.payload().len() {
+						return Err(());
+					}
+				}
+
+				owned
+			})),
 
 			_ => Err(()),
 		}
