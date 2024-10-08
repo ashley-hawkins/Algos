@@ -16,8 +16,6 @@ pub mod constants {
 	pub const ENCRYPT_REQUIRED_EXTRA_CAPACITY: usize = NONCE_LITE_BYTES + MAC_BYTES;
 }
 
-// TODO: Refactor so that the only inherent state is next_suffix.
-// I want this because the other state comes from elsewhere in the code whereas next_suffix is managed internally to the struct.
 pub struct VoiceConnectionCrypt {
 	next_suffix: u32,
 	aes_gcm: Option<aes_gcm::Aes256Gcm>,
@@ -57,18 +55,17 @@ impl VoiceConnectionCrypt {
 		let header_length = Self::get_total_header_length(&rtp_packet_view);
 		let cleartext_length = Self::get_cleartext_length(&rtp_packet_view);
 
-		let (cleartext, mut ciphertext) = packet.split_at_mut(cleartext_length);
-
-		let mut nonce = [0u8; NONCE_MAX_BYTES];
-		let (new_ciphertext, nonce_src) =
-			ciphertext.split_last_chunk_mut::<{ constants::NONCE_LITE_BYTES }>().unwrap();
-		ciphertext = new_ciphertext;
-		nonce[..constants::NONCE_LITE_BYTES].copy_from_slice(nonce_src);
-
+		let (cleartext, ciphertext) = packet.split_at_mut(cleartext_length);
+		let (ciphertext, nonce) =
+			ciphertext.split_last_chunk_mut::<{ constants::NONCE_LITE_BYTES }>()?;
 		let (mut ciphertext, tag) =
-			ciphertext.split_last_chunk_mut::<{ constants::MAC_BYTES }>().unwrap();
+			ciphertext.split_last_chunk_mut::<{ constants::MAC_BYTES }>()?;
+
+		let mut nonce_buffer = [0u8; NONCE_MAX_BYTES];
+		nonce_buffer[..constants::NONCE_LITE_BYTES].copy_from_slice(nonce);
+
 		let res = aes_gcm.decrypt_in_place_detached(
-			nonce.as_slice().into(),
+			nonce_buffer.as_slice().into(),
 			&cleartext,
 			&mut ciphertext,
 			tag.as_slice().into(),
@@ -77,7 +74,39 @@ impl VoiceConnectionCrypt {
 		res.ok().map(|_| (header_length, cleartext.len() + ciphertext.len()))
 	}
 
-	// fn encrypt_in_place(&self, buffer: &mut [u8], packet_length: usize) -> Option<&[u8]> {}
+	pub fn encrypt_in_place(&mut self, packet: &mut [u8]) -> Option<(usize, usize)> {
+		let aes_gcm = match self.aes_gcm.as_mut() {
+			Some(x) => x,
+			_ => return None,
+		};
+
+		let rtp_packet_view = RtpPacket::new(packet)?;
+
+		let header_length = Self::get_total_header_length(&rtp_packet_view);
+		let cleartext_length = Self::get_cleartext_length(&rtp_packet_view);
+
+		let (cleartext, ciphertext) = packet.split_at_mut(cleartext_length);
+
+		let (ciphertext, nonce) =
+			ciphertext.split_last_chunk_mut::<{ constants::NONCE_LITE_BYTES }>()?;
+		let (mut ciphertext, tag) =
+			ciphertext.split_last_chunk_mut::<{ constants::MAC_BYTES }>()?;
+
+		nonce.copy_from_slice(&self.next_suffix.to_ne_bytes());
+		self.next_suffix = self.next_suffix.wrapping_add(1);
+
+		let mut nonce_buffer = [0u8; NONCE_MAX_BYTES];
+		nonce_buffer[..size_of::<u32>()].copy_from_slice(nonce);
+
+		let res = aes_gcm.encrypt_in_place_detached(
+			nonce_buffer.as_slice().into(),
+			&cleartext,
+			&mut ciphertext,
+		);
+		tag.copy_from_slice(res.ok()?.as_slice());
+
+		res.ok().map(|_| (header_length, packet.len()))
+	}
 }
 
 impl Default for VoiceConnectionCrypt {
