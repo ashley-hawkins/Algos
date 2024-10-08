@@ -1,8 +1,8 @@
 #![feature(inline_const_pat)]
 
 pub mod constants;
-pub mod voice_connection;
 pub mod crypt;
+pub mod voice_connection;
 
 pub use cpal;
 
@@ -24,7 +24,6 @@ pub use parking_lot::{MappedReentrantMutexGuard, ReentrantMutex, ReentrantMutexG
 pub use tokio::sync::{
 	MappedMutexGuard as MappedAsyncMutexGuard, Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard,
 };
-
 
 pub fn add(left: u64, right: u64) -> u64 {
 	left + right

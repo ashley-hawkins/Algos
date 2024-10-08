@@ -269,7 +269,6 @@ impl TryFrom<&[u8]> for RtpPacket {
 	fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
 		let res = Self(value.to_vec());
 
-
 		if !res.is_valid() {
 			return Err(());
 		}

@@ -57,7 +57,8 @@ pub struct ConnectionHandle {
 pub fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> ConnectionHandle {
 	const UDP_MAX_PACKET_SIZE: usize = u16::MAX as usize; // = 65535
 
-	let (outbound_tx, outbound_rx) = flume::bounded::<VoiceConnMessage>(constants::MAIN_CHANNELS_SIZE);
+	let (outbound_tx, outbound_rx) =
+		flume::bounded::<VoiceConnMessage>(constants::MAIN_CHANNELS_SIZE);
 	let (inbound_tx, inbound_rx) = flume::bounded(constants::MAIN_CHANNELS_SIZE);
 
 	tokio::spawn(async move {
