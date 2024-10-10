@@ -5,14 +5,13 @@ use cpal::{
 };
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TryFromInto};
-use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
 	crypt::{self, VoiceConnectionCrypt},
 	engine::SyncVoiceEngine,
 	voice_connection::{
-		audio_thread::AudioThreadState,
+		audio_thread::AudioOutState,
 		connection_manager::ConnectionManager,
 		udp_connection,
 		user_manager::{UserInitialData, UserManager, UserManagerMessage},
@@ -69,7 +68,7 @@ impl VoiceConnectionInner {
 
 		let crypt = Arc::new(SyncMutex::new(VoiceConnectionCrypt::new()));
 
-		let (audio_thread, audio_callback) = AudioThreadState::create_callback();
+		let (audio_thread, audio_callback) = AudioOutState::create_callback();
 
 		let user_manager = UserManager::new(audio_thread).start();
 

@@ -2,56 +2,56 @@ use std::sync::Arc;
 
 use cpal::OutputCallbackInfo;
 
-use super::user_manager::UserCommon;
+use super::user_manager::RemoteUserCommon;
 
-pub struct AudioThreadUser {
+pub struct AudioOutUser {
 	user_id: u64,
 	draining: bool,
-	common: Arc<UserCommon>,
+	common: Arc<RemoteUserCommon>,
 	reader: rtrb::Consumer<f32>,
 }
 
-impl AudioThreadUser {
-	pub fn new(user_id: u64, common: Arc<UserCommon>, reader: rtrb::Consumer<f32>) -> Self {
+impl AudioOutUser {
+	pub fn new(user_id: u64, common: Arc<RemoteUserCommon>, reader: rtrb::Consumer<f32>) -> Self {
 		Self { user_id, draining: false, common, reader }
 	}
 }
 
-pub enum AudioThreadMessage {
-	AddUser(AudioThreadUser),
+pub enum AudioOutStateMessage {
+	AddUser(AudioOutUser),
 	RemoveUser(u64),
-	AddUsers(Vec<AudioThreadUser>),
+	AddUsers(Vec<AudioOutUser>),
 	RemoveUsers(Vec<u64>),
 }
 
-pub struct AudioThreadHandle {
-	message_sender: flume::Sender<AudioThreadMessage>,
+pub struct AudioOutStateHandle {
+	message_sender: flume::Sender<AudioOutStateMessage>,
 }
 
-impl AudioThreadHandle {
-	pub fn message_sender(&self) -> flume::Sender<AudioThreadMessage> {
+impl AudioOutStateHandle {
+	pub fn message_sender(&self) -> flume::Sender<AudioOutStateMessage> {
 		self.message_sender.clone()
 	}
 }
 
-pub struct AudioThreadState {
-	users: Vec<AudioThreadUser>,
+pub struct AudioOutState {
+	users: Vec<AudioOutUser>,
 }
 
-impl AudioThreadState {
-	pub fn create_callback() -> (AudioThreadHandle, impl FnMut(&mut [f32], &OutputCallbackInfo)) {
+impl AudioOutState {
+	pub fn create_callback() -> (AudioOutStateHandle, impl FnMut(&mut [f32], &OutputCallbackInfo)) {
 		let (message_sender, message_receiver) = flume::bounded(2);
 
 		let mut this = Self { users: Vec::new() };
 
-		(AudioThreadHandle { message_sender }, move |data, info| {
+		(AudioOutStateHandle { message_sender }, move |data, info| {
 			this.data_callback(&message_receiver, data, info)
 		})
 	}
 
 	pub fn data_callback(
 		&mut self,
-		message_receiver: &flume::Receiver<AudioThreadMessage>,
+		message_receiver: &flume::Receiver<AudioOutStateMessage>,
 		data: &mut [f32],
 		_callback_info: &OutputCallbackInfo,
 	) {
@@ -97,18 +97,18 @@ impl AudioThreadState {
 		}
 	}
 
-	pub fn process_message(&mut self, message: AudioThreadMessage) {
+	pub fn process_message(&mut self, message: AudioOutStateMessage) {
 		match message {
-			AudioThreadMessage::AddUser(user) => {
+			AudioOutStateMessage::AddUser(user) => {
 				self.users.push(user);
 			}
-			AudioThreadMessage::RemoveUser(user_id) => {
+			AudioOutStateMessage::RemoveUser(user_id) => {
 				self.users.retain(|user| user.user_id != user_id);
 			}
-			AudioThreadMessage::AddUsers(users) => {
+			AudioOutStateMessage::AddUsers(users) => {
 				self.users.extend(users);
 			}
-			AudioThreadMessage::RemoveUsers(user_ids) => {
+			AudioOutStateMessage::RemoveUsers(user_ids) => {
 				self.users.retain(|user| !user_ids.contains(&user.user_id));
 			}
 		}

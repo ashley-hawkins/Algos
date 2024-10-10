@@ -10,36 +10,36 @@ use serde_with::serde_as;
 
 use crate::constants;
 
-use super::audio_thread::{self, AudioThreadHandle, AudioThreadUser};
+use super::audio_thread::{self, AudioOutStateHandle, AudioOutUser};
 
-pub struct UserCommon {
+pub struct RemoteUserCommon {
 	pub ssrc: AtomicU32,
 	pub volume: AtomicF32,
 }
 
-pub struct User {
+pub struct RemoteUser {
 	user_id: u64,
-	common: Arc<UserCommon>,
+	common: Arc<RemoteUserCommon>,
 	writer: rtrb::Producer<f32>,
 
 	decoder: opus::Decoder,
 }
 
-impl User {
-	pub fn create_pair(user_id: u64, ssrc: u32, vol: f32) -> (User, AudioThreadUser) {
+impl RemoteUser {
+	pub fn create_pair(user_id: u64, ssrc: u32, vol: f32) -> (RemoteUser, AudioOutUser) {
 		let common =
-			Arc::new(UserCommon { ssrc: AtomicU32::new(ssrc), volume: AtomicF32::new(vol) });
+			Arc::new(RemoteUserCommon { ssrc: AtomicU32::new(ssrc), volume: AtomicF32::new(vol) });
 
 		let (rb_tx, rb_rx) = rtrb::RingBuffer::new(48000 * 2 * 5);
 
 		(
-			User {
+			RemoteUser {
 				user_id,
 				common: common.clone(),
 				writer: rb_tx,
 				decoder: opus::Decoder::new(48000, opus::Channels::Stereo).unwrap(),
 			},
-			AudioThreadUser::new(user_id, common, rb_rx),
+			AudioOutUser::new(user_id, common, rb_rx),
 		)
 	}
 
@@ -47,7 +47,7 @@ impl User {
 		self.user_id
 	}
 
-	pub fn common(&self) -> &Arc<UserCommon> {
+	pub fn common(&self) -> &Arc<RemoteUserCommon> {
 		&self.common
 	}
 }
@@ -86,12 +86,12 @@ pub struct UserInitialData {
 }
 
 pub struct UserManager {
-	users: Vec<User>,
-	audio_thread: AudioThreadHandle,
+	users: Vec<RemoteUser>,
+	audio_thread: AudioOutStateHandle,
 }
 
 impl UserManager {
-	pub fn new(audio_thread: AudioThreadHandle) -> Self {
+	pub fn new(audio_thread: AudioOutStateHandle) -> Self {
 		Self { users: Vec::new(), audio_thread }
 	}
 
@@ -124,7 +124,7 @@ impl UserManager {
 							return None;
 						}
 
-						let pair = User::create_pair(new_user.id, new_user.ssrc, new_user.volume);
+						let pair = RemoteUser::create_pair(new_user.id, new_user.ssrc, new_user.volume);
 						Some(pair)
 					})
 					.unzip();
@@ -136,7 +136,7 @@ impl UserManager {
 					1 => {
 						self.audio_thread
 							.message_sender()
-							.send(audio_thread::AudioThreadMessage::AddUser(
+							.send(audio_thread::AudioOutStateMessage::AddUser(
 								audio_thread_users.into_iter().next().unwrap(),
 							))
 							.expect("Failed to send message to audio thread");
@@ -144,7 +144,7 @@ impl UserManager {
 					2.. => self
 						.audio_thread
 						.message_sender()
-						.send(audio_thread::AudioThreadMessage::AddUsers(audio_thread_users))
+						.send(audio_thread::AudioOutStateMessage::AddUsers(audio_thread_users))
 						.expect("Failed to send message to audio thread"),
 				}
 			}
@@ -152,7 +152,7 @@ impl UserManager {
 				self.users.retain(|user| user.user_id() != user_id);
 				self.audio_thread
 					.message_sender()
-					.send(audio_thread::AudioThreadMessage::RemoveUser(user_id))
+					.send(audio_thread::AudioOutStateMessage::RemoveUser(user_id))
 					.expect("Failed to send message to audio thread");
 			}
 			UserManagerMessage::SetVolume(user_id, volume) => {
