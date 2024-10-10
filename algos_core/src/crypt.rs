@@ -18,7 +18,7 @@ pub mod constants {
 
 pub struct VoiceConnectionCrypt {
 	next_suffix: u32,
-	aes_gcm: Option<aes_gcm::Aes256Gcm>,
+	aes_gcm: Option<Aes256Gcm>,
 }
 
 impl VoiceConnectionCrypt {
@@ -29,7 +29,7 @@ impl VoiceConnectionCrypt {
 	}
 
 	pub fn set_key(&mut self, key: &[u8; constants::KEY_BYTES]) {
-		self.aes_gcm = Some(aes_gcm::Aes256Gcm::new(key.into()));
+		self.aes_gcm = Some(Aes256Gcm::new(key.into()));
 	}
 
 	pub fn get_cleartext_length(packet: &RtpPacket) -> usize {
