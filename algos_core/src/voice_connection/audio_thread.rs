@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
 
+use atomic_float::AtomicF32;
 use cpal::OutputCallbackInfo;
 
-use super::user_manager::RemoteUserCommon;
+use super::user_manager::{try_write, RemoteUserCommon};
 
 pub struct AudioOutUser {
 	user_id: u64,
@@ -49,7 +50,7 @@ impl AudioOutState {
 		})
 	}
 
-	pub fn data_callback(
+	fn data_callback(
 		&mut self,
 		message_receiver: &flume::Receiver<AudioOutStateMessage>,
 		data: &mut [f32],
@@ -97,7 +98,7 @@ impl AudioOutState {
 		}
 	}
 
-	pub fn process_message(&mut self, message: AudioOutStateMessage) {
+	fn process_message(&mut self, message: AudioOutStateMessage) {
 		match message {
 			AudioOutStateMessage::AddUser(user) => {
 				self.users.push(user);
@@ -112,5 +113,34 @@ impl AudioOutState {
 				self.users.retain(|user| !user_ids.contains(&user.user_id));
 			}
 		}
+	}
+}
+
+pub struct LocalUserCommon {
+	pub volume: AtomicF32,
+	pub muted: AtomicBool,
+}
+
+pub struct AudioInState {
+	common: Arc<LocalUserCommon>,
+	writer: rtrb::Producer<f32>,
+}
+
+impl AudioInState {
+	pub fn create_callback() -> (rtrb::Consumer<f32>, impl FnMut(&[f32], &cpal::InputCallbackInfo))
+	{
+		let (writer, reader) = rtrb::RingBuffer::new(5760 * 20);
+		let common = Arc::new(LocalUserCommon {
+			volume: AtomicF32::new(1.0),
+			muted: AtomicBool::new(false),
+		});
+
+		let mut this = Self { writer, common };
+
+		(reader, move |data, _info| this.data_callback(data))
+	}
+
+	fn data_callback(&mut self, data: &[f32]) {
+		try_write(&mut self.writer, data);
 	}
 }

@@ -112,7 +112,7 @@ pub fn create_connection(logger: slog::Logger, addr: (Ipv4Addr, u16)) -> Connect
 			// info!(logger, "Connection task loop iterating");
 			select! {
 				Ok(msg) = outbound_rx.recv_async() => {
-					info!(logger, "Sending {:#?}", msg);
+					info!(logger, "Sending {:?}", msg);
 					let data: Vec<u8> = msg.into();
 					match sock.send(&data).await {
 						Ok(_) => {}

@@ -1,4 +1,4 @@
-use algos_core::voice_connection::PingerHandle;
+use algos_core::voice_connection::{audio_thread::AudioInState, PingerHandle};
 use cpal::{
 	traits::{DeviceTrait, HostTrait, StreamTrait},
 	Stream,
@@ -38,12 +38,13 @@ type IpDiscoveredCallback = ThreadsafeFunction<(Ipv4Addr, u16), ErrorStrategy::F
 
 struct VoiceConnectionInner {
 	logger: slog::Logger,
-	user_id: String,
+	user_id: u64,
 	options: VoiceConnectionOptions,
 	pinger: PingerHandle,
 	user_manager: UserManagerHandle,
 	crypt: Arc<SyncMutex<VoiceConnectionCrypt>>,
-	stream: Stream,
+	out_stream: Stream,
+	in_stream: Stream,
 	cancellation_token: CancellationToken,
 }
 
@@ -62,15 +63,19 @@ impl VoiceConnectionInner {
 			options.port,
 		);
 
+		let user_id = user_id.parse().map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+		let ssrc = options.ssrc;
+
 		let cancellation_token = CancellationToken::new();
 
 		info!(logger, "Connecting to {}:{}", addr.0, addr.1);
 
 		let crypt = Arc::new(SyncMutex::new(VoiceConnectionCrypt::new()));
 
-		let (audio_thread, audio_callback) = AudioOutState::create_callback();
+		let (audio_out_handle, out_callback) = AudioOutState::create_callback();
+		let (reader, in_callback) = AudioInState::create_callback();
 
-		let user_manager = UserManager::new(audio_thread).start();
+		let user_manager = UserManager::new(audio_out_handle).start();
 
 		let conn = udp_connection::create_connection(logger.clone(), addr);
 
@@ -111,6 +116,14 @@ impl VoiceConnectionInner {
 			},
 		);
 
+		algos_core::voice_connection::start_voice_sender(
+			logger.clone(),
+			ssrc,
+			reader,
+			conn_manager.clone(),
+			cancellation_token.clone(),
+		);
+
 		let pinger = algos_core::voice_connection::start_pinger(
 			logger.new(o!("task" => "pinger")),
 			addr,
@@ -119,10 +132,15 @@ impl VoiceConnectionInner {
 		);
 
 		let dev = cpal::default_host().default_output_device().unwrap();
-		let supported_config = dev.default_output_config().unwrap();
-		let mut config = supported_config.config();
-		config.channels = 2;
-		config.sample_rate = cpal::SampleRate(48000);
+		let supported_out_config = dev.default_output_config().unwrap();
+		let mut out_config = supported_out_config.config();
+		out_config.channels = 2;
+		out_config.sample_rate = cpal::SampleRate(48000);
+
+		let supported_in_config = dev.default_input_config().unwrap();
+		let mut in_config = supported_in_config.config();
+		in_config.channels = 2;
+		in_config.sample_rate = cpal::SampleRate(48000);
 
 		// if let SupportedBufferSize::Range { min, max } = supported_config.buffer_size() {
 		// 	let mut max = *max;
@@ -133,17 +151,42 @@ impl VoiceConnectionInner {
 		// 	config.buffer_size = cpal::BufferSize::Fixed(max);
 		// }
 
-		let stream = dev
+		user_manager
+			.message_sender()
+			.send(UserManagerMessage::MergeUsers(vec![UserInitialData {
+				id: user_id,
+				ssrc,
+				volume: 1.0,
+				mute: false,
+				rtx_ssrc: 0,
+				video_ssrc: 0,
+				video_ssrcs: vec![],
+			}]))
+			.map_err(|e| napi::Error::from_reason(format!("{e}")))?;
+
+		let out_stream = dev
 			.build_output_stream(
-				&config,
-				audio_callback,
+				&out_config,
+				out_callback,
 				move |err| {
 					eprintln!("an error occurred on stream: {}", err);
 				},
 				None,
 			)
 			.unwrap();
-		stream.play().unwrap();
+		out_stream.play().unwrap();
+
+		let in_stream = dev
+			.build_input_stream(
+				&in_config,
+				in_callback,
+				move |err| {
+					eprintln!("an error occurred on stream: {}", err);
+				},
+				None,
+			)
+			.unwrap();
+		in_stream.play().unwrap();
 
 		Ok(Self {
 			logger,
@@ -152,7 +195,8 @@ impl VoiceConnectionInner {
 			pinger,
 			user_manager,
 			crypt,
-			stream,
+			out_stream,
+			in_stream,
 			cancellation_token,
 		})
 	}
@@ -314,18 +358,13 @@ impl VoiceConnectionInner {
 	pub fn set_on_speaking_callback(&self, env: Env, callback: JsFunction) -> napi::Result<()> {
 		info!(self.logger, "setOnSpeakingCallback called (PARTIALLY IMPLEMENTED)");
 
-		env.get_global()?
-			.get_named_property::<JsObject>("console")?
-			.get_named_property::<JsFunction>("log")?
-			.call(None, &[&callback])?;
-
-		let uid = self.user_id.clone();
+		let uid = self.user_id.to_string();
 
 		let tsfn: ThreadsafeFunction<(), ErrorStrategy::Fatal> = callback
 			.create_threadsafe_function(0, move |ctx| {
 				Ok(vec![
 					ctx.env.create_string(&uid)?.into_unknown(),
-					ctx.env.create_uint32(0)?.into_unknown(),
+					ctx.env.create_uint32(1)?.into_unknown(),
 				])
 			})?;
 
@@ -341,7 +380,7 @@ impl VoiceConnectionInner {
 	pub fn set_on_video_callback(&self, callback: JsFunction) -> napi::Result<()> {
 		info!(self.logger, "setOnVideoCallback called (PARTIALLY IMPLEMENTED)");
 
-		let uid = self.user_id.clone();
+		let uid = self.user_id.to_string();
 
 		let logger = self.logger.clone();
 		let tsfn: ThreadsafeFunction<(), ErrorStrategy::Fatal> = callback
@@ -452,7 +491,9 @@ impl VoiceConnectionInner {
 				warn!(self.logger, "Invalid key length provided");
 				return Err(napi::Error::from_reason("Invalid key length"));
 			}
+
 			crypt.set_key(settings.secret_key.as_slice().try_into().unwrap());
+			info!(self.logger, "Secret key set to {:?}", settings.secret_key);
 
 			if settings.mode != VoiceConnectionCrypt::MODE {
 				warn!(self.logger, "Invalid mode provided");

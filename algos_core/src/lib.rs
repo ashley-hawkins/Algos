@@ -1,4 +1,5 @@
 #![feature(inline_const_pat)]
+#![feature(random)]
 
 pub mod constants;
 pub mod crypt;

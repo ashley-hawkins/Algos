@@ -76,23 +76,23 @@ pub enum UserManagerMessage {
 #[serde(rename_all = "camelCase")]
 pub struct UserInitialData {
 	#[serde_as(as = "serde_with::DisplayFromStr")]
-	id: u64,
-	mute: bool,
-	rtx_ssrc: u32,
-	ssrc: u32,
-	video_ssrc: u32,
-	video_ssrcs: Vec<u32>,
-	volume: f32,
+	pub id: u64,
+	pub mute: bool,
+	pub rtx_ssrc: u32,
+	pub ssrc: u32,
+	pub video_ssrc: u32,
+	pub video_ssrcs: Vec<u32>,
+	pub volume: f32,
 }
 
 pub struct UserManager {
 	users: Vec<RemoteUser>,
-	audio_thread: AudioOutStateHandle,
+	audio_out: AudioOutStateHandle,
 }
 
 impl UserManager {
 	pub fn new(audio_thread: AudioOutStateHandle) -> Self {
-		Self { users: Vec::new(), audio_thread }
+		Self { users: Vec::new(), audio_out: audio_thread }
 	}
 
 	pub fn start(mut self) -> UserManagerHandle {
@@ -124,7 +124,8 @@ impl UserManager {
 							return None;
 						}
 
-						let pair = RemoteUser::create_pair(new_user.id, new_user.ssrc, new_user.volume);
+						let pair =
+							RemoteUser::create_pair(new_user.id, new_user.ssrc, new_user.volume);
 						Some(pair)
 					})
 					.unzip();
@@ -134,7 +135,7 @@ impl UserManager {
 				match audio_thread_users.len() {
 					0 => {}
 					1 => {
-						self.audio_thread
+						self.audio_out
 							.message_sender()
 							.send(audio_thread::AudioOutStateMessage::AddUser(
 								audio_thread_users.into_iter().next().unwrap(),
@@ -142,7 +143,7 @@ impl UserManager {
 							.expect("Failed to send message to audio thread");
 					}
 					2.. => self
-						.audio_thread
+						.audio_out
 						.message_sender()
 						.send(audio_thread::AudioOutStateMessage::AddUsers(audio_thread_users))
 						.expect("Failed to send message to audio thread"),
@@ -150,7 +151,7 @@ impl UserManager {
 			}
 			UserManagerMessage::DestroyUser(user_id) => {
 				self.users.retain(|user| user.user_id() != user_id);
-				self.audio_thread
+				self.audio_out
 					.message_sender()
 					.send(audio_thread::AudioOutStateMessage::RemoveUser(user_id))
 					.expect("Failed to send message to audio thread");
@@ -173,14 +174,7 @@ impl UserManager {
 					match user.decoder.decode_float(&data, &mut output, false) {
 						Ok(len) => {
 							let len = len * 2;
-							if let Ok(mut chunk) = writer.write_chunk_uninit(len) {
-								let (first, second) = chunk.as_mut_slices();
-								let mid = first.len();
-								output[..mid].copy_to_uninit(first);
-								output[mid..len].copy_to_uninit(second);
-								// SAFETY: All slots have been initialized
-								unsafe { chunk.commit_all() };
-							}
+							try_write(writer, &output[..len]);
 						}
 						Err(_e) => {
 							panic!("Sneed to handle this error");
@@ -190,5 +184,20 @@ impl UserManager {
 				}
 			}
 		}
+	}
+}
+
+pub(crate) fn try_write<T: Copy>(writer: &mut rtrb::Producer<T>, data: &[T]) {
+	let len = data.len();
+
+	if let Ok(mut chunk) = writer.write_chunk_uninit(len) {
+		let (first, second) = chunk.as_mut_slices();
+		let mid = first.len();
+		data[..mid].copy_to_uninit(first);
+		data[mid..len].copy_to_uninit(second);
+		// SAFETY: All slots have been initialized
+		unsafe { chunk.commit_all() };
+	} else {
+		panic!("Huh");
 	}
 }

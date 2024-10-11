@@ -1,5 +1,7 @@
-use std::{cmp, net::Ipv4Addr, time::Duration};
+use std::{cmp, net::Ipv4Addr, random, time::Duration};
 
+use discortp::rtp::{MutableRtpPacket, Rtp, RtpPacket};
+use rtrb::chunks::ChunkError;
 use slog::{info, warn};
 use tokio::{
 	select,
@@ -7,6 +9,8 @@ use tokio::{
 	time::timeout,
 };
 use tokio_util::sync::CancellationToken;
+
+use crate::crypt::{self, VoiceConnectionCrypt};
 
 use super::{
 	connection_manager::{ConnectionManagerHandle, ConnectionManagerMessage},
@@ -123,4 +127,85 @@ pub fn start_pinger(
 	});
 
 	PingerHandle { ping_callback: ping_callback_tx, ping_interval: ping_interval_tx }
+}
+
+pub fn start_voice_sender(
+	logger: slog::Logger,
+	ssrc: u32,
+	mut reader: rtrb::Consumer<f32>,
+	connection_manager: ConnectionManagerHandle,
+	cancellation_token: CancellationToken,
+) {
+	const SAMPLES_PER_CHANNEL_PER_FRAME: usize = 960;
+	const TOTAL_SAMPLES_PER_FRAME: usize = SAMPLES_PER_CHANNEL_PER_FRAME * 2;
+
+	fn micros_from_samples(available: usize) -> u64 {
+		(TOTAL_SAMPLES_PER_FRAME as u64
+			- (available as u64).clamp(0, TOTAL_SAMPLES_PER_FRAME as u64))
+			* 1_000_000
+			/ 48_000 / 2
+	}
+
+	let mut encoder =
+		opus::Encoder::new(48000, opus::Channels::Stereo, opus::Application::Audio).unwrap();
+
+	tokio::spawn(async move {
+		let mut buffer = [0.0; TOTAL_SAMPLES_PER_FRAME];
+		let mut sequence = 0;
+		let mut timestamp: u32 = random::random();
+		loop {
+			let available = match reader.read_chunk(TOTAL_SAMPLES_PER_FRAME) {
+				Ok(read_chunk) => {
+					for (src, dst) in read_chunk.into_iter().zip(&mut buffer) {
+						*dst = src;
+					}
+
+					if let Ok(encoded) = encoder.encode_vec_float(&buffer, buffer.len()) {
+						let rtp_packet = Rtp {
+							version: 2,
+							padding: false as u8,
+							extension: false as u8,
+							csrc_count: 0,
+							marker: false as u8,
+							payload_type: discortp::rtp::RtpType::Dynamic(120),
+							sequence: sequence.into(),
+							timestamp: timestamp.into(),
+							ssrc,
+							csrc_list: vec![],
+							payload: encoded,
+						};
+
+						let packet_size = RtpPacket::packet_size(&rtp_packet);
+						let mut buf = vec![
+							0u8;
+							packet_size
+								+ crypt::constants::ENCRYPT_REQUIRED_EXTRA_CAPACITY
+						];
+
+						let mut packet = MutableRtpPacket::new(&mut buf[..packet_size]).unwrap();
+						packet.populate(&rtp_packet);
+
+						if connection_manager
+							.outbound
+							.try_send(ConnectionManagerMessage::Rtp { data: buf })
+							.is_ok()
+						{
+							sequence = sequence.wrapping_add(1);
+							timestamp = timestamp.wrapping_add(SAMPLES_PER_CHANNEL_PER_FRAME as u32);
+						}
+					}
+
+					reader.slots()
+				}
+				Err(ChunkError::TooFewSlots(available)) => available,
+			};
+
+			select! {
+				_ = tokio::time::sleep(Duration::from_micros(micros_from_samples(available))) => {}
+				_ = cancellation_token.cancelled() => {
+					break;
+				}
+			};
+		}
+	});
 }
