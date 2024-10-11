@@ -151,19 +151,6 @@ impl VoiceConnectionInner {
 		// 	config.buffer_size = cpal::BufferSize::Fixed(max);
 		// }
 
-		user_manager
-			.message_sender()
-			.send(UserManagerMessage::MergeUsers(vec![UserInitialData {
-				id: user_id,
-				ssrc,
-				volume: 1.0,
-				mute: false,
-				rtx_ssrc: 0,
-				video_ssrc: 0,
-				video_ssrcs: vec![],
-			}]))
-			.map_err(|e| napi::Error::from_reason(format!("{e}")))?;
-
 		let out_stream = dev
 			.build_output_stream(
 				&out_config,

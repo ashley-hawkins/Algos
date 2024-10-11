@@ -20,7 +20,6 @@ pub enum ConnectionManagerMessage {
 	Ping { seq: u8, respond_to: oneshot::Sender<()> },
 	IpDiscovery { data: IpDiscoveryPacket, respond_to: oneshot::Sender<IpDiscoveryPacket> },
 	Rtp { data: Vec<u8> },
-	FakeInbound(VoiceConnMessage),
 }
 
 #[derive(Clone)]
@@ -150,13 +149,10 @@ impl ConnectionManager {
 			ConnectionManagerMessage::Rtp { mut data } => {
 				self.crypt.lock().encrypt_in_place(data.as_mut_slice());
 
-				self.process_inbound_message(VoiceConnMessage::Rtp(data.clone()), user_manager);
-
 				if let Err(e) = connection.outbound.send_async(VoiceConnMessage::Rtp(data)).await {
 					warn!(self.logger, "Failed to send RTP message: {e}");
 				}
 			}
-			ConnectionManagerMessage::FakeInbound(msg) => {}
 		}
 	}
 }
