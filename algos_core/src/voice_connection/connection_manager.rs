@@ -97,7 +97,11 @@ impl ConnectionManager {
 				let payload_type = rtp_packet_view.get_payload_type();
 
 				// If this isn't an Opus packet, ignore it
-				if !matches!(payload_type, RtpType::Dynamic(120)) {
+				if !matches!(payload_type, RtpType::Dynamic(120 | 103)) {
+					info!(
+						self.logger,
+						"Received non-Opus RTP packet. Payload type: {payload_type:?}"
+					);
 					return;
 				}
 
@@ -109,13 +113,20 @@ impl ConnectionManager {
 				{
 					// info!(self.logger, "Received RTP packet. Header length: {header_length}, Total length: {total_length}, Ssrc: {ssrc}, Packet type: {payload_type}");
 
-					let _ = user_manager
-						.message_sender()
-						// TODO: this is probably not super efficient idk
-						.try_send(UserManagerMessage::Audio(
+					if payload_type == RtpType::Dynamic(120) {
+						let _ = user_manager
+							.message_sender()
+							// TODO: this is probably not super efficient idk
+							.try_send(UserManagerMessage::Audio(
+								ssrc,
+								data[header_length..total_length].to_vec(),
+							));
+					} else {
+						let _ = user_manager.message_sender().try_send(UserManagerMessage::Video(
 							ssrc,
-							data[header_length..total_length].to_vec(),
+							data[0..total_length].to_vec(),
 						));
+					}
 					// info!(self.logger, "Decoded audio packet: {}", output.len());
 				} else {
 					warn!(self.logger, "Failed to decrypt RTP packet. Ssrc: {ssrc}");

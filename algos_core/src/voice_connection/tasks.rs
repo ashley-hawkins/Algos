@@ -191,7 +191,8 @@ pub fn start_voice_sender(
 							.is_ok()
 						{
 							sequence = sequence.wrapping_add(1);
-							timestamp = timestamp.wrapping_add(SAMPLES_PER_CHANNEL_PER_FRAME as u32);
+							timestamp =
+								timestamp.wrapping_add(SAMPLES_PER_CHANNEL_PER_FRAME as u32);
 						}
 					}
 

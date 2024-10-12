@@ -1,5 +1,5 @@
 use std::sync::{
-	atomic::{self, AtomicU32},
+	atomic::{self},
 	Arc,
 };
 
@@ -7,37 +7,52 @@ use atomic_float::AtomicF32;
 use rtrb::CopyToUninit;
 use serde::Deserialize;
 use serde_with::serde_as;
+use tokio::{
+	net::UdpSocket,
+	sync::{oneshot, watch},
+};
 
-use crate::constants;
+use crate::{
+	constants,
+	video_thread::{VideoThreadCommand, VideoThreadHandle},
+};
 
 use super::audio_thread::{self, AudioOutStateHandle, AudioOutUser};
 
 pub struct RemoteUserCommon {
-	pub ssrc: AtomicU32,
 	pub volume: AtomicF32,
 }
 
 pub struct RemoteUser {
 	user_id: u64,
+	ssrc: u32,
+	video_ssrc: u32,
 	common: Arc<RemoteUserCommon>,
 	writer: rtrb::Producer<f32>,
-
 	decoder: opus::Decoder,
+	video_stream_id: Option<u64>,
 }
 
 impl RemoteUser {
-	pub fn create_pair(user_id: u64, ssrc: u32, vol: f32) -> (RemoteUser, AudioOutUser) {
-		let common =
-			Arc::new(RemoteUserCommon { ssrc: AtomicU32::new(ssrc), volume: AtomicF32::new(vol) });
+	pub fn create_pair(
+		user_id: u64,
+		ssrc: u32,
+		video_ssrc: u32,
+		vol: f32,
+	) -> (RemoteUser, AudioOutUser) {
+		let common = Arc::new(RemoteUserCommon { volume: AtomicF32::new(vol) });
 
 		let (rb_tx, rb_rx) = rtrb::RingBuffer::new(48000 * 2 * 5);
 
 		(
 			RemoteUser {
 				user_id,
+				ssrc,
+				video_ssrc,
 				common: common.clone(),
 				writer: rb_tx,
 				decoder: opus::Decoder::new(48000, opus::Channels::Stereo).unwrap(),
+				video_stream_id: None,
 			},
 			AudioOutUser::new(user_id, common, rb_rx),
 		)
@@ -50,24 +65,6 @@ impl RemoteUser {
 	pub fn common(&self) -> &Arc<RemoteUserCommon> {
 		&self.common
 	}
-}
-
-#[derive(Clone)]
-pub struct UserManagerHandle {
-	message_sender: flume::Sender<UserManagerMessage>,
-}
-
-impl UserManagerHandle {
-	pub fn message_sender(&self) -> &flume::Sender<UserManagerMessage> {
-		&self.message_sender
-	}
-}
-
-pub enum UserManagerMessage {
-	MergeUsers(Vec<UserInitialData>),
-	DestroyUser(u64),
-	SetVolume(u64, f32),
-	Audio(u32, Vec<u8>),
 }
 
 #[allow(dead_code)]
@@ -85,29 +82,70 @@ pub struct UserInitialData {
 	pub volume: f32,
 }
 
+#[derive(Clone)]
+pub struct UserManagerHandle {
+	message_sender: flume::Sender<UserManagerMessage>,
+	on_video_callback_sender: watch::Sender<Option<OnVideoCallback>>,
+}
+
+impl UserManagerHandle {
+	pub fn message_sender(&self) -> &flume::Sender<UserManagerMessage> {
+		&self.message_sender
+	}
+
+	pub fn set_on_video_callback(&self, f: OnVideoCallback) {
+		self.on_video_callback_sender.send(Some(f)).unwrap();
+	}
+}
+
+pub enum UserManagerMessage {
+	MergeUsers(Vec<UserInitialData>),
+	DestroyUser(u64),
+	SetVolume(u64, f32),
+	Audio(u32, Vec<u8>),
+	Video(u32, Vec<u8>),
+	StreamIdAssigned(u64, u64),
+}
+
+type OnVideoCallback = Box<dyn Fn(u64, u32, Option<u64>) + Send + Sync>;
+
 pub struct UserManager {
 	users: Vec<RemoteUser>,
 	audio_out: AudioOutStateHandle,
+	video_thread: VideoThreadHandle,
 }
 
 impl UserManager {
-	pub fn new(audio_thread: AudioOutStateHandle) -> Self {
-		Self { users: Vec::new(), audio_out: audio_thread }
+	pub fn new(audio_thread: AudioOutStateHandle, video_thread: VideoThreadHandle) -> Self {
+		Self { users: Vec::new(), audio_out: audio_thread, video_thread }
 	}
 
 	pub fn start(mut self) -> UserManagerHandle {
 		let (message_sender, message_receiver) = flume::bounded(constants::MAIN_CHANNELS_SIZE);
+		let (tx, mut rx) = watch::channel(None);
 
-		tokio::spawn(async move {
-			while let Ok(msg) = message_receiver.recv_async().await {
-				self.process_message(msg);
+		let self_handle = UserManagerHandle { message_sender, on_video_callback_sender: tx };
+		tokio::spawn({
+			let mut self_handle = self_handle.clone();
+			async move {
+				// let mut video_udp = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+				// video_udp.connect("127.0.0.1:9999").await.unwrap();
+
+				while let Ok(msg) = message_receiver.recv_async().await {
+					self.process_message(msg, &mut self_handle, &mut rx).await;
+				}
 			}
 		});
 
-		UserManagerHandle { message_sender }
+		self_handle
 	}
 
-	fn process_message(&mut self, msg: UserManagerMessage) {
+	async fn process_message(
+		&mut self,
+		msg: UserManagerMessage,
+		self_handle: &mut UserManagerHandle,
+		video_callback: &mut watch::Receiver<Option<OnVideoCallback>>,
+	) {
 		match msg {
 			UserManagerMessage::MergeUsers(users) => {
 				let (users, audio_thread_users): (Vec<_>, Vec<_>) = users
@@ -116,16 +154,49 @@ impl UserManager {
 						if let Some(existing_user) =
 							self.users.iter_mut().find(|u| u.user_id() == new_user.id)
 						{
-							existing_user
-								.common()
-								.ssrc
-								.store(new_user.ssrc, atomic::Ordering::SeqCst);
+							existing_user.ssrc = new_user.ssrc;
+
+							if (existing_user.video_ssrc == 0) && (new_user.video_ssrc != 0) {
+								existing_user.video_ssrc = new_user.video_ssrc;
+
+								let (tx, rx) = oneshot::channel();
+								self.video_thread
+									.sender
+									.send(VideoThreadCommand::ReserveStream { reply_to: tx })
+									.unwrap();
+
+								tokio::spawn({
+									let self_handle = self_handle.clone();
+									let video_callback = video_callback.clone();
+									let user_id = existing_user.user_id;
+									let ssrc = existing_user.ssrc;
+									async move {
+										let stream_id = rx.await.unwrap();
+
+										if let Some(f) = video_callback.borrow().as_ref() {
+											f(user_id, ssrc, Some(stream_id));
+										}
+
+										self_handle
+											.message_sender()
+											.send(UserManagerMessage::StreamIdAssigned(
+												user_id, stream_id,
+											))
+											.unwrap();
+									}
+								});
+							}
 
 							return None;
 						}
 
-						let pair =
-							RemoteUser::create_pair(new_user.id, new_user.ssrc, new_user.volume);
+						let pair = RemoteUser::create_pair(
+							new_user.id,
+							new_user.ssrc,
+							new_user.video_ssrc,
+							new_user.volume,
+						);
+
 						Some(pair)
 					})
 					.unzip();
@@ -162,11 +233,7 @@ impl UserManager {
 				}
 			}
 			UserManagerMessage::Audio(ssrc, data) => {
-				if let Some(user) = self
-					.users
-					.iter_mut()
-					.find(|user| user.common().ssrc.load(atomic::Ordering::SeqCst) == ssrc)
-				{
+				if let Some(user) = self.users.iter_mut().find(|user| user.ssrc == ssrc) {
 					let mut output = [0.0; 5760 * 2];
 
 					let writer = &mut user.writer;
@@ -181,6 +248,24 @@ impl UserManager {
 							// warn!(self.logger, "Failed to decode opus packet: {e}; {ssrc} {csrc_count} {total_length} {header_length} {has_ext} {ext_id:?} {ext_len:?} {ext_payload:?} Data: {data:?} Data Original: {data_original:?}");
 						}
 					};
+				}
+			}
+			UserManagerMessage::Video(ssrc, data) => {
+				if let Some(user) = self.users.iter().find(|user| user.video_ssrc == ssrc)
+					&& let Some(video_stream_id) = user.video_stream_id
+				{
+					// self.video_thread
+					// 	.sender
+					// 	.send(VideoThreadCommand::Packet {
+					// 		stream_id: video_stream_id,
+					// 		packet: data,
+					// 	})
+					// 	.unwrap();
+				}
+			}
+			UserManagerMessage::StreamIdAssigned(user_id, stream_id) => {
+				if let Some(user) = self.users.iter_mut().find(|u| u.user_id() == user_id) {
+					user.video_stream_id = Some(stream_id);
 				}
 			}
 		}

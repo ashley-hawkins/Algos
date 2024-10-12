@@ -1,11 +1,16 @@
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+
 use crate::drains::JsWriter;
 use crate::{SyncMutex, SyncMutexGuard};
 
+use algos_core::video_thread::{run_video_thread, VideoThreadHandle};
 use cpal::traits::{DeviceTrait, HostTrait};
 use napi::{
 	threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
 	tokio, Env, JsFunction, JsObject, Result,
 };
+use napi::{JsUnknown, NapiValue};
 use napi_derive::napi;
 use napi_derive_ext::module_interface;
 use slog::{info, o, Drain};
@@ -13,6 +18,7 @@ use slog::{info, o, Drain};
 pub struct VoiceEngine {
 	root_logger: slog::Logger,
 	options: Option<EngineOptions>,
+	video_thread: VideoThreadHandle,
 }
 
 impl VoiceEngine {
@@ -37,6 +43,8 @@ impl VoiceEngine {
 		// let drain2 = slog_term::FullFormat::new(decorator).build().fuse();
 		// let drain2 = slog_async::Async::new(drain2).build().fuse();
 
+		let video_thread = run_video_thread();
+
 		let js_writer = JsWriter::new(
 			env,
 			env.get_global()?
@@ -53,11 +61,15 @@ impl VoiceEngine {
 		let root_logger = slog::Logger::root(drain3, o!("class" => "VoiceEngine"));
 		info!(root_logger, "Initialized"; "pid" => std::process::id());
 
-		Ok(Self { root_logger, options: None })
+		Ok(Self { root_logger, options: None, video_thread })
 	}
 
 	pub(crate) fn logger(&self) -> &slog::Logger {
 		&self.root_logger
+	}
+
+	pub(crate) fn video_thread(&self) -> &VideoThreadHandle {
+		&self.video_thread
 	}
 }
 
@@ -224,23 +236,44 @@ impl SyncVoiceEngine {
 	}
 
 	#[module_interface(napi)]
-	pub(crate) fn set_video_output_sink(&self, callback: JsFunction) {
-		info!(self.lock().logger(), "setVideoOutputSink called (UNIMPLEMENTED)");
+	pub(crate) fn set_video_output_sink(&self, something: JsUnknown) {
+		let ty = something.get_type().unwrap();
+		info!(self.lock().logger(), "setVideoOutputSink called (UNIMPLEMENTED) ADADADADA: {ty:?}");
 	}
 
 	#[module_interface(napi)]
 	pub(crate) fn add_direct_video_output_sink(&self, stream_id: String) {
-		info!(self.lock().logger(), "addDirectVideoOutputSink called (UNIMPLEMENTED)");
+		info!(self.lock().logger(), "addDirectVideoOutputSink called (IMPLEMENTED)");
+
+		let stream_id = stream_id.parse::<u64>().unwrap();
+
+		self.lock()
+			.video_thread()
+			.sender
+			.send(algos_core::video_thread::VideoThreadCommand::CreateStream { stream_id })
+			.unwrap();
 	}
 
 	#[module_interface(napi)]
 	pub(crate) fn remove_direct_video_output_sink(&self, stream_id: String) {
 		info!(self.lock().logger(), "removeDirectVideoOutputSink called (UNIMPLEMENTED)");
+
+		let stream_id = stream_id.parse::<u64>().unwrap();
+
+		self.lock()
+			.video_thread()
+			.sender
+			.send(algos_core::video_thread::VideoThreadCommand::DestroyStream { stream_id })
+			.unwrap();
 	}
 
 	#[module_interface(napi)]
-	pub(crate) fn signal_video_output_sink_ready(&self, callback: JsFunction) {
-		info!(self.lock().logger(), "signalVideoOutputSinkReady called (UNIMPLEMENTED)");
+	pub(crate) fn signal_video_output_sink_ready(&self, something: JsUnknown) {
+		let ty = something.get_type().unwrap();
+		info!(
+			self.lock().logger(),
+			"signalVideoOutputSinkReady called (UNIMPLEMENTED) ADADADADA: {ty:?}"
+		);
 	}
 
 	#[module_interface(napi)]

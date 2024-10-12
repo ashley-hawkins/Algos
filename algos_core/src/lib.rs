@@ -1,8 +1,11 @@
 #![feature(inline_const_pat)]
 #![feature(random)]
+#![feature(let_chains)]
 
 pub mod constants;
 pub mod crypt;
+pub mod discord_electron;
+pub mod video_thread;
 pub mod voice_connection;
 
 pub use cpal;

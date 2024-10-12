@@ -1,10 +1,14 @@
-use algos_core::voice_connection::{audio_thread::AudioInState, PingerHandle};
+use algos_core::{
+	video_thread,
+	voice_connection::{audio_thread::AudioInState, PingerHandle},
+};
 use cpal::{
 	traits::{DeviceTrait, HostTrait, StreamTrait},
 	Stream,
 };
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TryFromInto};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -57,6 +61,8 @@ impl VoiceConnectionInner {
 	) -> napi::Result<Self> {
 		let engine = SyncVoiceEngine::instance(env);
 		let logger = engine.lock().logger().new(o!("class" => "VoiceConnection"));
+		let video_thread = engine.lock().video_thread().clone();
+
 		let addr = (
 			Ipv4Addr::from_str(&options.address)
 				.map_err(|_| napi::Error::from_reason("Invalid IP address"))?,
@@ -75,7 +81,7 @@ impl VoiceConnectionInner {
 		let (audio_out_handle, out_callback) = AudioOutState::create_callback();
 		let (reader, in_callback) = AudioInState::create_callback();
 
-		let user_manager = UserManager::new(audio_out_handle).start();
+		let user_manager = UserManager::new(audio_out_handle, video_thread).start();
 
 		let conn = udp_connection::create_connection(logger.clone(), addr);
 
@@ -367,23 +373,37 @@ impl VoiceConnectionInner {
 	pub fn set_on_video_callback(&self, callback: JsFunction) -> napi::Result<()> {
 		info!(self.logger, "setOnVideoCallback called (PARTIALLY IMPLEMENTED)");
 
-		let uid = self.user_id.to_string();
-
+		let uid = self.user_id;
 		let logger = self.logger.clone();
-		let tsfn: ThreadsafeFunction<(), ErrorStrategy::Fatal> = callback
+
+		let tsfn: ThreadsafeFunction<(String, u32, String), ErrorStrategy::Fatal> = callback
 			.create_threadsafe_function(0, move |ctx| {
-				info!(logger, "WHAT!?!?!?!?!");
+				let (uid, ssrc, stream_id): (String, u32, String) = ctx.value;
 				Ok(vec![
-					ctx.env.create_string(&uid)?.into_unknown(),
-					ctx.env.create_uint32(0)?.into_unknown(),
-					ctx.env.create_string("")?.into_unknown(),
-					Array::from_ref_vec(&ctx.env, &([] as [JsNumber; 0]))?
+					ctx.env.create_string(uid.as_str())?.into_unknown(),
+					ctx.env.create_uint32(ssrc)?.into_unknown(),
+					ctx.env.create_string(stream_id.as_str())?.into_unknown(),
+					Array::from_vec(&ctx.env, Vec::<JsUnknown>::new())?
 						.coerce_to_object()?
 						.into_unknown(),
 				])
 			})?;
 
-		tokio::spawn(async move { tsfn.call((), ThreadsafeFunctionCallMode::Blocking) });
+		let f = move |uid: u64, ssrc: u32, stream_id: Option<u64>| {
+			tsfn.call(
+				(uid.to_string(), ssrc, stream_id.map_or("".to_owned(), |id| id.to_string())),
+				ThreadsafeFunctionCallMode::NonBlocking,
+			);
+		};
+
+		tokio::spawn({
+			let f = f.clone();
+			async move {
+				f(uid, 0, None);
+			}
+		});
+
+		self.user_manager.set_on_video_callback(Box::new(f));
 
 		Ok(())
 	}

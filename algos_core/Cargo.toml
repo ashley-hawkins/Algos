@@ -10,6 +10,11 @@ byteorder = "1.5.0"
 cpal = { version = "0.15.3", features = ["asio", "jack"] }
 discortp = "0.6.0"
 flume = "0.11.0"
+futures = "0.3.31"
+glib = "0.20.4"
+gstreamer = { package = "gstreamer", version = "0.23.2" }
+gstreamer-app = { package = "gstreamer-app", version = "0.23.2" }
+gst-rtp = { version = "0.23.2", package = "gstreamer-rtp" }
 opus = "0.3.0"
 parking_lot = "0.12.3"
 rtrb = "0.3.1"
@@ -18,5 +23,12 @@ serde_with = "3.11.0"
 slog = "2.7.0"
 static_assertions_next = "1.1.2"
 strum = { version = "0.26.3", features = ["derive"] }
-tokio = { version = "1.40.0", features = ["macros", "net", "parking_lot", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.40.0", features = [
+    "macros",
+    "net",
+    "parking_lot",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
 tokio-util = "0.7.12"
