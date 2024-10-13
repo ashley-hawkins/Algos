@@ -148,6 +148,40 @@ impl UserManager {
 	) {
 		match msg {
 			UserManagerMessage::MergeUsers(users) => {
+				fn handle_video(
+					video_thread: &VideoThreadHandle,
+					self_handle: &mut UserManagerHandle,
+					video_callback: &mut watch::Receiver<
+						Option<Box<dyn Fn(u64, u32, Option<u64>) + Send + Sync>>,
+					>,
+					new_user: &UserInitialData,
+				) {
+					let (tx, rx) = oneshot::channel();
+					video_thread
+						.sender
+						.send(VideoThreadCommand::ReserveStream { reply_to: tx })
+						.unwrap();
+
+					tokio::spawn({
+						let self_handle = self_handle.clone();
+						let video_callback = video_callback.clone();
+						let user_id = new_user.id;
+						let ssrc = new_user.ssrc;
+						async move {
+							let stream_id = rx.await.unwrap();
+
+							if let Some(f) = video_callback.borrow().as_ref() {
+								f(user_id, ssrc, Some(stream_id));
+							}
+
+							self_handle
+								.message_sender()
+								.send(UserManagerMessage::StreamIdAssigned(user_id, stream_id))
+								.unwrap();
+						}
+					});
+				}
+
 				let (users, audio_thread_users): (Vec<_>, Vec<_>) = users
 					.into_iter()
 					.filter_map(|new_user| {
@@ -155,39 +189,28 @@ impl UserManager {
 							self.users.iter_mut().find(|u| u.user_id() == new_user.id)
 						{
 							existing_user.ssrc = new_user.ssrc;
+							let initial_video_ssrc = existing_user.video_ssrc;
+							existing_user.video_ssrc = new_user.video_ssrc;
 
-							if (existing_user.video_ssrc == 0) && (new_user.video_ssrc != 0) {
-								existing_user.video_ssrc = new_user.video_ssrc;
-
-								let (tx, rx) = oneshot::channel();
-								self.video_thread
-									.sender
-									.send(VideoThreadCommand::ReserveStream { reply_to: tx })
-									.unwrap();
-
-								tokio::spawn({
-									let self_handle = self_handle.clone();
-									let video_callback = video_callback.clone();
-									let user_id = existing_user.user_id;
-									let ssrc = existing_user.ssrc;
-									async move {
-										let stream_id = rx.await.unwrap();
-
-										if let Some(f) = video_callback.borrow().as_ref() {
-											f(user_id, ssrc, Some(stream_id));
-										}
-
-										self_handle
-											.message_sender()
-											.send(UserManagerMessage::StreamIdAssigned(
-												user_id, stream_id,
-											))
-											.unwrap();
-									}
-								});
+							if (initial_video_ssrc == 0) && (new_user.video_ssrc != 0) {
+								handle_video(
+									&self.video_thread,
+									self_handle,
+									video_callback,
+									&new_user,
+								);
 							}
 
 							return None;
+						}
+
+						if new_user.video_ssrc != 0 {
+							handle_video(
+								&self.video_thread,
+								self_handle,
+								video_callback,
+								&new_user,
+							);
 						}
 
 						let pair = RemoteUser::create_pair(
@@ -254,13 +277,13 @@ impl UserManager {
 				if let Some(user) = self.users.iter().find(|user| user.video_ssrc == ssrc)
 					&& let Some(video_stream_id) = user.video_stream_id
 				{
-					// self.video_thread
-					// 	.sender
-					// 	.send(VideoThreadCommand::Packet {
-					// 		stream_id: video_stream_id,
-					// 		packet: data,
-					// 	})
-					// 	.unwrap();
+					self.video_thread
+						.sender
+						.send(VideoThreadCommand::Packet {
+							stream_id: video_stream_id,
+							packet: data,
+						})
+						.unwrap();
 				}
 			}
 			UserManagerMessage::StreamIdAssigned(user_id, stream_id) => {

@@ -1,7 +1,13 @@
-use std::{cell::RefCell, collections::HashMap, convert::identity, rc::Rc, sync::Arc};
+use std::{
+	cell::RefCell, collections::HashMap, convert::identity, hint::black_box, net::{Ipv4Addr, UdpSocket}, rc::Rc, sync::Arc
+};
 
 use glib::object::{Cast, ObjectExt};
-use gstreamer::prelude::*;
+use gst::{
+	bus::BusWatchGuard, ffi::gst_buffer_map, prelude::*, BufferRef, MessageType, MessageView,
+};
+use gst_app::AppSrcCallbacks;
+use slog::info;
 use tokio::sync::oneshot;
 
 use crate::discord_electron::{
@@ -12,6 +18,7 @@ pub enum VideoThreadCommand {
 	ReserveStream { reply_to: oneshot::Sender<u64> },
 	CreateStream { stream_id: u64 },
 	DestroyStream { stream_id: u64 },
+	Packet { stream_id: u64, packet: Vec<u8> },
 }
 
 #[derive(Clone)]
@@ -19,8 +26,10 @@ pub struct VideoThreadHandle {
 	pub sender: flume::Sender<VideoThreadCommand>,
 }
 
-pub fn run_video_thread() -> VideoThreadHandle {
+pub fn run_video_thread(logger: slog::Logger) -> VideoThreadHandle {
 	let (sender, receiver) = flume::unbounded();
+
+	let udp_sender = UdpSocket::bind("127.0.0.1:0").unwrap();
 
 	std::thread::spawn(move || {
 		let main_context = glib::MainContext::default();
@@ -42,88 +51,172 @@ pub fn run_video_thread() -> VideoThreadHandle {
 					reply_to.send(this_stream_id).unwrap();
 				}
 				VideoThreadCommand::CreateStream { stream_id } => {
-					add_stream(stream_id, &mut streams);
+					add_stream(logger.clone(), stream_id, &mut streams);
 				}
 				VideoThreadCommand::DestroyStream { stream_id } => {
 					println!("Destroying stream in video thread");
 					streams.remove(&stream_id);
 				}
+				VideoThreadCommand::Packet { stream_id, packet } => {
+					if let Some(Some((sender, _))) = streams.get_mut(&stream_id) {
+						// sender.send(packet).unwrap();
+						let res = udp_sender.send_to(&packet, (Ipv4Addr::new(127, 0, 0, 1), *sender));
+                        black_box(res);
+
+						//
+
+						// let buf = gst::Buffer::with_size(packet.len()).unwrap();
+
+						// let mut buf = buf.into_mapped_buffer_writable().unwrap();
+						// buf.copy_from_slice(&packet);
+
+						// let mut buf = buf.into_buffer();
+						// // {
+						// // 	let buf = buf.get_mut().unwrap();
+						// // 	buf.set_size(packet.len());
+						// // 	buf.set_pts(gst::ClockTime::from_mseconds(
+						// // 		begin.elapsed().as_millis() as u64
+						// // 	));
+						// // }
+
+						// let _ = sender.push_buffer(buf);
+
+						// //
+					}
+				}
 			});
 			glib::ControlFlow::Continue
 		});
-        
+
 		let main_loop = glib::MainLoop::new(None, false);
-        gstreamer::init().unwrap();
-        main_loop.run();
+		gst::init().unwrap();
+		main_loop.run();
 	});
 
 	VideoThreadHandle { sender }
 }
 
 struct MemWrapper<'a, T> {
-	sample_mem: Arc<gstreamer::Memory>,
-	map: gstreamer::MemoryMap<'a, T>,
+	sample_mem: Arc<gst::Memory>,
+	map: gst::MemoryMap<'a, T>,
 }
 
-fn add_stream(this_stream_id: u64, streams: &mut HashMap<u64, Option<gstreamer::Element>>) {
+// fn add_stream(this_stream_id: u64, streams: &mut HashMap<u64, Option<(flume::Sender<Vec<u8>>, gst::Element)>>) {
+fn add_stream(
+	logger: slog::Logger,
+	this_stream_id: u64,
+	streams: &mut HashMap<u64, Option<(u16, (gst::Element, BusWatchGuard))>>,
+) {
 	println!("Adding stream to video thread");
 
-	let e = gstreamer::parse::launch(
-                            r##"videotestsrc ! video/x-raw,format=(string)I420,framerate=30/1,width=(int)1280,height=(int)720 ! appsink emit-signals=true name=a"##,
-                        ).unwrap();
+	// let e = gst::parse::launch(
+	//                         r##"udpsrc name=src port=0 caps="application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)H264, payload=(int)96" ! rtph264depay ! decodebin ! video/x-raw,format=(string)I420,framerate=30/1,width=(int)1280,height=(int)720 ! appsink emit-signals=true name=dst"##,
+	//                     ).unwrap();
+	// let e = gst::parse::launch(
+	//     r##"appsrc is-live="true" name=src caps="application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)VP8, payload=(int)105" ! rtpvp8depay ! decodebin ! videoconvert ! appsink emit-signals=true name=dst caps="video/x-raw,format=(string)I420,framerate=30/1,width=(int)1280,height=(int)720""##,
+	// ).unwrap();
+	// let e: gst::Element = gst::parse::launch(
+	//     r##"appsrc is-live="true" name=src caps="application/x-rtp, media=video, clock-rate=90000" ! rtpvp8depay ! fakesink"##,
+	// ).unwrap();
 
-	let e: gstreamer::Bin = e.downcast().unwrap();
-	let app = e.by_name("a").unwrap();
-	let app_sink: gstreamer_app::AppSink = app.downcast().unwrap();
+	let e = gst::parse::launch(
+        r##"udpsrc name=src caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)H264, payload=(int)96" port=0 ! rtph264depay ! decodebin ! videoscale ! videoconvert ! video/x-raw,format=I420,width=1280,height=720 ! appsink emit-signals=true name=dst"##,
+                    ).unwrap();
+
+	let e: gst::Bin = e.downcast().unwrap();
+	// let app_src: gst_app::AppSrc = e.by_name("src").unwrap().downcast().unwrap();
+	let udp_src: gst_base::PushSrc = e.by_name("src").unwrap().downcast().unwrap();
+	let app_sink: gst_app::AppSink = e.by_name("dst").unwrap().downcast().unwrap();
 
 	let mut timestamp_us: u64 = 0;
-	let callbacks = gstreamer_app::AppSinkCallbacks::builder()
+	let sink_callbacks = gst_app::AppSinkCallbacks::builder()
 		.eos(|_| {})
-		.new_preroll(move |_| Ok(gstreamer::FlowSuccess::Ok))
-		.new_sample(move |sink| {
-			let sample = Arc::new(sink.pull_sample().unwrap());
-			let buf = sample.buffer().unwrap();
-			let sample_mem = buf.all_memory().unwrap();
-			let map = sample_mem.map_readable().unwrap();
+		.new_preroll(move |_| Ok(gst::FlowSuccess::Ok))
+		.new_sample({
+			let logger = logger.clone();
+			move |sink| {
+				info!(logger, "NEWSAMPLE");
+				let sample = Arc::new(sink.pull_sample().unwrap());
+				let buf = sample.buffer().unwrap();
+				let sample_mem = buf.all_memory().unwrap();
+				let map = sample_mem.map_readable().unwrap();
 
-			let width = 1280;
-			let height = 720;
+				let width = 1280;
+				let height = 720;
 
-			let yuv_frame = unsafe {
-				DiscordYUVFrame::from_raw_unchecked(map.as_slice().as_ptr(), width, height)
-			};
+				let yuv_frame = unsafe {
+					DiscordYUVFrame::from_raw_unchecked(map.as_slice().as_ptr(), width, height)
+				};
 
-			drop(map);
+				drop(map);
 
-			let frame = DiscordFrame {
-				timestamp_us: timestamp_us as i64,
-				frame: DiscordFrameUnion { yuv: yuv_frame },
-				width: width as i32,
-				height: height as i32,
-				type_: DiscordFrameType::DiscordFrameI420,
-			};
+				let frame = DiscordFrame {
+					timestamp_us: timestamp_us as i64,
+					frame: DiscordFrameUnion { yuv: yuv_frame },
+					width: width as i32,
+					height: height as i32,
+					type_: DiscordFrameType::DiscordFrameI420,
+				};
 
-			timestamp_us = timestamp_us.wrapping_add(1_000_000 / 30);
+				timestamp_us = timestamp_us.wrapping_add(1_000_000 / 30);
 
-			unsafe {
-				deliver_discord_frame(
-					&this_stream_id.to_string(),
-					frame,
-					{
-						move || {
-							drop(sample_mem);
-						}
-					},
-					std::ptr::null_mut(),
-				);
+				unsafe {
+					deliver_discord_frame(
+						&this_stream_id.to_string(),
+						frame,
+						{
+							move || {
+								drop(sample_mem);
+							}
+						},
+						std::ptr::null_mut(),
+					);
+				}
+
+				Ok(gst::FlowSuccess::Ok)
 			}
-
-			Ok(gstreamer::FlowSuccess::Ok)
 		})
 		.build();
 
-	app_sink.set_callbacks(callbacks);
-    
-    e.set_state(gstreamer::State::Playing).unwrap();
-	streams.insert(this_stream_id, Some(e.upcast()));
+	app_sink.set_callbacks(sink_callbacks);
+
+	// let (packet_sender, packet_receiver) = flume::unbounded::<Vec<u8>>();
+
+	let had_enough = false;
+	// let begin = std::time::Instant::now();
+	// let src_callbacks = AppSrcCallbacks::builder()
+	// 	.need_data(move |x, want_bytes| {
+	// for packet in packet_receiver.try_iter() {
+	// 	let buf = gst::Buffer::with_size(packet.len()).unwrap();
+
+	// 	let mut buf = buf.into_mapped_buffer_writable().unwrap();
+	// 	buf.copy_from_slice(&packet);
+
+	// 	let mut buf = buf.into_buffer();
+	// 	{
+	// 		let buf = buf.get_mut().unwrap();
+	// 		buf.set_size(packet.len());
+	// 		buf.set_pts(gst::ClockTime::from_mseconds(begin.elapsed().as_millis() as u64));
+	// 	}
+
+	// 	let _ = x.push_buffer(buf);
+	// 		}
+	// 	})
+	// 	.build();
+	// app_src.set_callbacks(src_callbacks);
+
+	e.set_state(gst::State::Playing).unwrap();
+	let guard = e
+		.bus()
+		.unwrap()
+		.add_watch(move |_bus, message| {
+			let view = message.view();
+			info!(logger, "BUSMESSAGE: {view:#?}");
+
+			glib::ControlFlow::Continue
+		})
+		.unwrap();
+	let port = udp_src.property::<i32>("port") as u16;
+	// streams.insert(this_stream_id, Some((packet_sender, e.upcast())));
+	streams.insert(this_stream_id, Some((port, (e.upcast(), guard))));
 }

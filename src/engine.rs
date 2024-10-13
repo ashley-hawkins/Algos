@@ -43,8 +43,6 @@ impl VoiceEngine {
 		// let drain2 = slog_term::FullFormat::new(decorator).build().fuse();
 		// let drain2 = slog_async::Async::new(drain2).build().fuse();
 
-		let video_thread = run_video_thread();
-
 		let js_writer = JsWriter::new(
 			env,
 			env.get_global()?
@@ -61,6 +59,7 @@ impl VoiceEngine {
 		let root_logger = slog::Logger::root(drain3, o!("class" => "VoiceEngine"));
 		info!(root_logger, "Initialized"; "pid" => std::process::id());
 
+		let video_thread = run_video_thread(root_logger.clone());
 		Ok(Self { root_logger, options: None, video_thread })
 	}
 
