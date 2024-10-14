@@ -10,7 +10,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::crypt::{self, VoiceConnectionCrypt};
+use crate::crypt;
 
 use super::{
 	connection_manager::{ConnectionManagerHandle, ConnectionManagerMessage},

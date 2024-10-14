@@ -1,7 +1,6 @@
 use std::{
 	cell::RefCell,
 	collections::HashMap,
-	hint::black_box,
 	net::{Ipv4Addr, UdpSocket},
 	rc::Rc,
 	sync::Arc,
@@ -62,7 +61,6 @@ pub fn run_video_thread(logger: slog::Logger) -> VideoThreadHandle {
 						// sender.send(packet).unwrap();
 						let res =
 							udp_sender.send_to(&packet, (Ipv4Addr::new(127, 0, 0, 1), *sender));
-						black_box(res);
 
 						//
 
@@ -95,11 +93,6 @@ pub fn run_video_thread(logger: slog::Logger) -> VideoThreadHandle {
 	});
 
 	VideoThreadHandle { sender }
-}
-
-struct MemWrapper<'a, T> {
-	sample_mem: Arc<gst::Memory>,
-	map: gst::MemoryMap<'a, T>,
 }
 
 // fn add_stream(this_stream_id: u64, streams: &mut HashMap<u64, Option<(flume::Sender<Vec<u8>>, gst::Element)>>) {

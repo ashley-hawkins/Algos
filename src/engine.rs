@@ -1,16 +1,13 @@
-use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
-
 use crate::drains::JsWriter;
 use crate::{SyncMutex, SyncMutexGuard};
 
 use algos_core::video_thread::{run_video_thread, VideoThreadHandle};
 use cpal::traits::{DeviceTrait, HostTrait};
+use napi::JsUnknown;
 use napi::{
 	threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
 	tokio, Env, JsFunction, JsObject, Result,
 };
-use napi::{JsUnknown, NapiValue};
 use napi_derive::napi;
 use napi_derive_ext::module_interface;
 use slog::{info, o, Drain};

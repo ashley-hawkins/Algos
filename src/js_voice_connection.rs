@@ -1,14 +1,10 @@
-use algos_core::{
-	video_thread,
-	voice_connection::{audio_thread::AudioInState, PingerHandle},
-};
+use algos_core::voice_connection::{audio_thread::AudioInState, PingerHandle};
 use cpal::{
 	traits::{DeviceTrait, HostTrait, StreamTrait},
 	Stream,
 };
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, TryFromInto};
-use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -30,7 +26,7 @@ use napi::{
 	threadsafe_function::{
 		ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 	},
-	Env, JsFunction, JsNumber, JsObject, JsUnknown,
+	Env, JsFunction, JsObject, JsUnknown,
 };
 use napi_derive::napi;
 use slog::{info, o, warn};
@@ -374,7 +370,6 @@ impl VoiceConnectionInner {
 		info!(self.logger, "setOnVideoCallback called (PARTIALLY IMPLEMENTED)");
 
 		let uid = self.user_id;
-		let logger = self.logger.clone();
 
 		let tsfn: ThreadsafeFunction<(String, u32, String), ErrorStrategy::Fatal> = callback
 			.create_threadsafe_function(0, move |ctx| {

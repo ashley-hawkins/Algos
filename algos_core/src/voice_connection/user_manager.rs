@@ -7,10 +7,7 @@ use atomic_float::AtomicF32;
 use rtrb::CopyToUninit;
 use serde::Deserialize;
 use serde_with::serde_as;
-use tokio::{
-	net::UdpSocket,
-	sync::{oneshot, watch},
-};
+use tokio::sync::{oneshot, watch};
 
 use crate::{
 	constants,
