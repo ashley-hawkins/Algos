@@ -1,18 +1,18 @@
 use std::{
-	cell::RefCell, collections::HashMap, convert::identity, hint::black_box, net::{Ipv4Addr, UdpSocket}, rc::Rc, sync::Arc
+	cell::RefCell,
+	collections::HashMap,
+	hint::black_box,
+	net::{Ipv4Addr, UdpSocket},
+	rc::Rc,
+	sync::Arc,
 };
 
-use glib::object::{Cast, ObjectExt};
-use gst::{
-	bus::BusWatchGuard, ffi::gst_buffer_map, prelude::*, BufferRef, MessageType, MessageView,
-};
-use gst_app::AppSrcCallbacks;
+use gst::{bus::BusWatchGuard, prelude::*};
+
+use discord_electron::{deliver_discord_frame, DiscordFrame, DiscordYuvFrame};
+use glib::object::Cast;
 use slog::info;
 use tokio::sync::oneshot;
-
-use crate::discord_electron::{
-	deliver_discord_frame, DiscordFrame, DiscordFrameType, DiscordFrameUnion, DiscordYUVFrame,
-};
 
 pub enum VideoThreadCommand {
 	ReserveStream { reply_to: oneshot::Sender<u64> },
@@ -60,8 +60,9 @@ pub fn run_video_thread(logger: slog::Logger) -> VideoThreadHandle {
 				VideoThreadCommand::Packet { stream_id, packet } => {
 					if let Some(Some((sender, _))) = streams.get_mut(&stream_id) {
 						// sender.send(packet).unwrap();
-						let res = udp_sender.send_to(&packet, (Ipv4Addr::new(127, 0, 0, 1), *sender));
-                        black_box(res);
+						let res =
+							udp_sender.send_to(&packet, (Ipv4Addr::new(127, 0, 0, 1), *sender));
+						black_box(res);
 
 						//
 
@@ -139,39 +140,23 @@ fn add_stream(
 				let sample = Arc::new(sink.pull_sample().unwrap());
 				let buf = sample.buffer().unwrap();
 				let sample_mem = buf.all_memory().unwrap();
-				let map = sample_mem.map_readable().unwrap();
+				let mapped_memory = sample_mem.into_mapped_memory_readable().unwrap();
 
 				let width = 1280;
 				let height = 720;
 
-				let yuv_frame = unsafe {
-					DiscordYUVFrame::from_raw_unchecked(map.as_slice().as_ptr(), width, height)
-				};
-
-				drop(map);
+				let yuv_frame = DiscordYuvFrame::new(mapped_memory, width, height);
 
 				let frame = DiscordFrame {
 					timestamp_us: timestamp_us as i64,
-					frame: DiscordFrameUnion { yuv: yuv_frame },
+					frame: yuv_frame,
 					width: width as i32,
 					height: height as i32,
-					type_: DiscordFrameType::DiscordFrameI420,
 				};
 
 				timestamp_us = timestamp_us.wrapping_add(1_000_000 / 30);
 
-				unsafe {
-					deliver_discord_frame(
-						&this_stream_id.to_string(),
-						frame,
-						{
-							move || {
-								drop(sample_mem);
-							}
-						},
-						std::ptr::null_mut(),
-					);
-				}
+				unsafe { deliver_discord_frame(&this_stream_id.to_string(), frame) };
 
 				Ok(gst::FlowSuccess::Ok)
 			}

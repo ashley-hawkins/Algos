@@ -1,0 +1,7 @@
+[package]
+name = "discord-electron"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+discord-electron-ffi = { version = "0.1.0", path = "../discord-electron-ffi" }

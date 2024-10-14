@@ -8,6 +8,7 @@ aes-gcm = "0.10.3"
 atomic_float = "1.1.0"
 byteorder = "1.5.0"
 cpal = { version = "0.15.3", features = ["asio", "jack"] }
+discord-electron = { version = "0.1.0", path = "discord-electron" }
 discortp = "0.6.0"
 flume = "0.11.0"
 futures = "0.3.31"
