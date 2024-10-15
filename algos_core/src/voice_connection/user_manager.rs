@@ -5,6 +5,7 @@ use std::sync::{
 
 use atomic_float::AtomicF32;
 use rtrb::CopyToUninit;
+use samplerate::ConverterType;
 use serde::Deserialize;
 use serde_with::serde_as;
 use tokio::sync::{oneshot, watch};
@@ -27,6 +28,7 @@ pub struct RemoteUser {
 	common: Arc<RemoteUserCommon>,
 	writer: rtrb::Producer<f32>,
 	decoder: opus::Decoder,
+	resampler: samplerate::Samplerate,
 	video_stream_id: Option<u64>,
 }
 
@@ -49,6 +51,8 @@ impl RemoteUser {
 				common: common.clone(),
 				writer: rb_tx,
 				decoder: opus::Decoder::new(48000, opus::Channels::Stereo).unwrap(),
+				resampler: samplerate::Samplerate::new(ConverterType::SincFastest, 48000, 96000, 2)
+					.unwrap(),
 				video_stream_id: None,
 			},
 			AudioOutUser::new(user_id, common, rb_rx),
@@ -113,24 +117,32 @@ pub struct UserManager {
 }
 
 impl UserManager {
-	pub fn new(audio_thread: AudioOutStateHandle, video_thread: VideoThreadHandle) -> Self {
-		Self { users: Vec::new(), audio_out: audio_thread, video_thread }
-	}
-
-	pub fn start(mut self) -> UserManagerHandle {
+	pub fn start(
+		audio_thread: AudioOutStateHandle,
+		video_thread: VideoThreadHandle,
+	) -> UserManagerHandle {
 		let (message_sender, message_receiver) = flume::bounded(constants::MAIN_CHANNELS_SIZE);
 		let (tx, mut rx) = watch::channel(None);
 
 		let self_handle = UserManagerHandle { message_sender, on_video_callback_sender: tx };
-		tokio::spawn({
+		let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
+		std::thread::spawn({
 			let mut self_handle = self_handle.clone();
-			async move {
+			move || {
 				// let mut video_udp = UdpSocket::bind("0.0.0.0:0").await.unwrap();
 				// video_udp.connect("127.0.0.1:9999").await.unwrap();
 
-				while let Ok(msg) = message_receiver.recv_async().await {
-					self.process_message(msg, &mut self_handle, &mut rx).await;
-				}
+				let local_set = tokio::task::LocalSet::new();
+				local_set.spawn_local(async move {
+					let mut this =
+						Self { users: Vec::new(), audio_out: audio_thread, video_thread };
+
+					while let Ok(msg) = message_receiver.recv_async().await {
+						this.process_message(msg, &mut self_handle, &mut rx).await;
+					}
+				});
+				rt.block_on(local_set);
 			}
 		});
 
@@ -261,7 +273,7 @@ impl UserManager {
 					match user.decoder.decode_float(&data, &mut output, false) {
 						Ok(len) => {
 							let len = len * 2;
-							try_write(writer, &output[..len]);
+							try_write(writer, &user.resampler.process(&output[..len]).unwrap());
 						}
 						Err(_e) => {
 							panic!("Sneed to handle this error");

@@ -77,7 +77,7 @@ impl VoiceConnectionInner {
 		let (audio_out_handle, out_callback) = AudioOutState::create_callback();
 		let (reader, in_callback) = AudioInState::create_callback();
 
-		let user_manager = UserManager::new(audio_out_handle, video_thread).start();
+		let user_manager = UserManager::start(audio_out_handle, video_thread);
 
 		let conn = udp_connection::create_connection(logger.clone(), addr);
 
@@ -138,7 +138,7 @@ impl VoiceConnectionInner {
 			let supported_out_config = output_dev.default_output_config().ok()?;
 			let mut out_config = supported_out_config.config();
 			out_config.channels = 2;
-			out_config.sample_rate = cpal::SampleRate(48000);
+			out_config.sample_rate = cpal::SampleRate(96000);
 
 			let out_stream = output_dev
 				.build_output_stream(
