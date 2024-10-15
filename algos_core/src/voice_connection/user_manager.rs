@@ -226,26 +226,26 @@ impl UserManager {
 				match audio_thread_users.len() {
 					0 => {}
 					1 => {
-						self.audio_out
-							.message_sender()
-							.send(audio_thread::AudioOutStateMessage::AddUser(
+						let _ = self.audio_out.message_sender().send(
+							audio_thread::AudioOutStateMessage::AddUser(
 								audio_thread_users.into_iter().next().unwrap(),
-							))
-							.expect("Failed to send message to audio thread");
+							),
+						);
 					}
-					2.. => self
-						.audio_out
-						.message_sender()
-						.send(audio_thread::AudioOutStateMessage::AddUsers(audio_thread_users))
-						.expect("Failed to send message to audio thread"),
+					2.. => {
+						let _ = self
+							.audio_out
+							.message_sender()
+							.send(audio_thread::AudioOutStateMessage::AddUsers(audio_thread_users));
+					}
 				}
 			}
 			UserManagerMessage::DestroyUser(user_id) => {
 				self.users.retain(|user| user.user_id() != user_id);
-				self.audio_out
+				let _ = self
+					.audio_out
 					.message_sender()
-					.send(audio_thread::AudioOutStateMessage::RemoveUser(user_id))
-					.expect("Failed to send message to audio thread");
+					.send(audio_thread::AudioOutStateMessage::RemoveUser(user_id));
 			}
 			UserManagerMessage::SetVolume(user_id, volume) => {
 				if let Some(user) = self.users.iter().find(|user| user.user_id() == user_id) {

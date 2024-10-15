@@ -43,8 +43,8 @@ struct VoiceConnectionInner {
 	pinger: PingerHandle,
 	user_manager: UserManagerHandle,
 	crypt: Arc<SyncMutex<VoiceConnectionCrypt>>,
-	out_stream: Stream,
-	in_stream: Stream,
+	out_stream: Option<Stream>,
+	in_stream: Option<Stream>,
 	cancellation_token: CancellationToken,
 }
 
@@ -133,16 +133,55 @@ impl VoiceConnectionInner {
 			cancellation_token.clone(),
 		);
 
-		let dev = cpal::default_host().default_output_device().unwrap();
-		let supported_out_config = dev.default_output_config().unwrap();
-		let mut out_config = supported_out_config.config();
-		out_config.channels = 2;
-		out_config.sample_rate = cpal::SampleRate(48000);
+		let out_stream = || -> Option<Stream> {
+			let output_dev = cpal::default_host().default_output_device()?;
+			let supported_out_config = output_dev.default_output_config().ok()?;
+			let mut out_config = supported_out_config.config();
+			out_config.channels = 2;
+			out_config.sample_rate = cpal::SampleRate(48000);
 
-		let supported_in_config = dev.default_input_config().unwrap();
-		let mut in_config = supported_in_config.config();
-		in_config.channels = 2;
-		in_config.sample_rate = cpal::SampleRate(48000);
+			let out_stream = output_dev
+				.build_output_stream(
+					&out_config,
+					out_callback,
+					move |err| {
+						eprintln!("an error occurred on stream: {}", err);
+					},
+					None,
+				)
+				.ok()?;
+			out_stream.play().ok()?;
+			Some(out_stream)
+		}();
+
+		let in_stream = || -> Option<Stream> {
+			let input_dev = cpal::default_host().default_input_device()?;
+			let supported_in_config = input_dev.default_input_config().ok()?;
+			let mut in_config = supported_in_config.config();
+			in_config.channels = 2;
+			in_config.sample_rate = cpal::SampleRate(48000);
+
+			let in_stream = input_dev
+				.build_input_stream(
+					&in_config,
+					in_callback,
+					move |err| {
+						eprintln!("an error occurred on stream: {}", err);
+					},
+					None,
+				)
+				.ok()?;
+			in_stream.play().ok()?;
+			Some(in_stream)
+		}();
+
+		if out_stream.is_none() {
+			warn!(logger, "Output audio stream could not be created");
+		}
+
+		if in_stream.is_none() {
+			warn!(logger, "Input audio stream could not be created");
+		}
 
 		// if let SupportedBufferSize::Range { min, max } = supported_config.buffer_size() {
 		// 	let mut max = *max;
@@ -152,30 +191,6 @@ impl VoiceConnectionInner {
 
 		// 	config.buffer_size = cpal::BufferSize::Fixed(max);
 		// }
-
-		let out_stream = dev
-			.build_output_stream(
-				&out_config,
-				out_callback,
-				move |err| {
-					eprintln!("an error occurred on stream: {}", err);
-				},
-				None,
-			)
-			.unwrap();
-		out_stream.play().unwrap();
-
-		let in_stream = dev
-			.build_input_stream(
-				&in_config,
-				in_callback,
-				move |err| {
-					eprintln!("an error occurred on stream: {}", err);
-				},
-				None,
-			)
-			.unwrap();
-		in_stream.play().unwrap();
 
 		Ok(Self {
 			logger,
