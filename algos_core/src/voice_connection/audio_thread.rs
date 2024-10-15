@@ -23,8 +23,10 @@ pub enum AudioOutStateMessage {
 	RemoveUser(u64),
 	AddUsers(Vec<AudioOutUser>),
 	RemoveUsers(Vec<u64>),
+	SetDeafen(bool),
 }
 
+#[derive(Clone)]
 pub struct AudioOutStateHandle {
 	message_sender: flume::Sender<AudioOutStateMessage>,
 }
@@ -37,13 +39,14 @@ impl AudioOutStateHandle {
 
 pub struct AudioOutState {
 	users: Vec<AudioOutUser>,
+	defeaned: bool,
 }
 
 impl AudioOutState {
 	pub fn create_callback() -> (AudioOutStateHandle, impl FnMut(&mut [f32], &OutputCallbackInfo)) {
 		let (message_sender, message_receiver) = flume::bounded(2);
 
-		let mut this = Self { users: Vec::new() };
+		let mut this = Self { users: Vec::new(), defeaned: false };
 
 		(AudioOutStateHandle { message_sender }, move |data, info| {
 			this.data_callback(&message_receiver, data, info)
@@ -92,7 +95,10 @@ impl AudioOutState {
 
 			user.reader.read_chunk(data.len()).unwrap().into_iter().zip(data.iter_mut()).for_each(
 				|(src, dst)| {
-					*dst += vol * src;
+					if !self.defeaned
+					{
+						*dst += vol * src;
+					}
 				},
 			);
 		}
@@ -111,6 +117,9 @@ impl AudioOutState {
 			}
 			AudioOutStateMessage::RemoveUsers(user_ids) => {
 				self.users.retain(|user| !user_ids.contains(&user.user_id));
+			}
+			AudioOutStateMessage::SetDeafen(deafen) => {
+				self.defeaned = deafen;
 			}
 		}
 	}

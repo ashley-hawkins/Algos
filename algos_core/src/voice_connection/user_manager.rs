@@ -1,5 +1,5 @@
 use std::sync::{
-	atomic::{self},
+	atomic::{self, AtomicBool},
 	Arc,
 };
 
@@ -18,6 +18,7 @@ use crate::{
 use super::audio_thread::{self, AudioOutStateHandle, AudioOutUser};
 
 pub struct RemoteUserCommon {
+	pub muted: AtomicBool,
 	pub volume: AtomicF32,
 }
 
@@ -38,8 +39,9 @@ impl RemoteUser {
 		ssrc: u32,
 		video_ssrc: u32,
 		vol: f32,
+		mute: bool,
 	) -> (RemoteUser, AudioOutUser) {
-		let common = Arc::new(RemoteUserCommon { volume: AtomicF32::new(vol) });
+		let common = Arc::new(RemoteUserCommon { muted: AtomicBool::new(mute), volume: AtomicF32::new(vol) });
 
 		let (rb_tx, rb_rx) = rtrb::RingBuffer::new(48000 * 2 * 5);
 
@@ -103,6 +105,7 @@ pub enum UserManagerMessage {
 	MergeUsers(Vec<UserInitialData>),
 	DestroyUser(u64),
 	SetVolume(u64, f32),
+	SetMute(u64, bool),
 	Audio(u32, Vec<u8>),
 	Video(u32, Vec<u8>),
 	StreamIdAssigned(u64, u64),
@@ -227,6 +230,7 @@ impl UserManager {
 							new_user.ssrc,
 							new_user.video_ssrc,
 							new_user.volume,
+							new_user.mute,
 						);
 
 						Some(pair)
@@ -262,6 +266,11 @@ impl UserManager {
 			UserManagerMessage::SetVolume(user_id, volume) => {
 				if let Some(user) = self.users.iter().find(|user| user.user_id() == user_id) {
 					user.common().volume.store(volume, atomic::Ordering::Relaxed);
+				}
+			}
+			UserManagerMessage::SetMute(user_id, mute) => {
+				if let Some(user) = self.users.iter().find(|user| user.user_id() == user_id) {
+					user.common().muted.store(mute, atomic::Ordering::Relaxed);
 				}
 			}
 			UserManagerMessage::Audio(ssrc, data) => {

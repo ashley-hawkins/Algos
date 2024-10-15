@@ -1,4 +1,4 @@
-use algos_core::voice_connection::{audio_thread::AudioInState, PingerHandle};
+use algos_core::voice_connection::{audio_thread::{AudioInState, AudioOutStateHandle, AudioOutStateMessage}, PingerHandle};
 use cpal::{
 	traits::{DeviceTrait, HostTrait, StreamTrait},
 	Stream,
@@ -42,6 +42,7 @@ struct VoiceConnectionInner {
 	options: VoiceConnectionOptions,
 	pinger: PingerHandle,
 	user_manager: UserManagerHandle,
+	audio_out_handle: AudioOutStateHandle,
 	crypt: Arc<SyncMutex<VoiceConnectionCrypt>>,
 	out_stream: Option<Stream>,
 	in_stream: Option<Stream>,
@@ -77,7 +78,7 @@ impl VoiceConnectionInner {
 		let (audio_out_handle, out_callback) = AudioOutState::create_callback();
 		let (reader, in_callback) = AudioInState::create_callback();
 
-		let user_manager = UserManager::start(audio_out_handle, video_thread);
+		let user_manager = UserManager::start(audio_out_handle.clone(), video_thread);
 
 		let conn = udp_connection::create_connection(logger.clone(), addr);
 
@@ -198,6 +199,7 @@ impl VoiceConnectionInner {
 			options,
 			pinger,
 			user_manager,
+			audio_out_handle,
 			crypt,
 			out_stream,
 			in_stream,
@@ -292,8 +294,19 @@ impl VoiceConnectionInner {
 		info!(self.logger, "setDisableLocalVideo called (UNIMPLEMENTED)");
 	}
 
-	pub fn set_local_mute(&self) {
-		info!(self.logger, "setLocalMute called (UNIMPLEMENTED)");
+	pub fn set_local_mute(&self, user_id: String, mute: bool) -> napi::Result<()> {
+		info!(self.logger, "setLocalMute called (IMPLEMENTED) for user {user_id} with mute {mute}");
+
+		self.user_manager.message_sender().send(UserManagerMessage::SetMute(
+			user_id.parse().map_err(|e| {
+				napi::Error::from_reason(format!("Failed to parse user ID: {e}"))
+			})?,
+			mute,
+		)).map_err(|e| {
+			napi::Error::from_reason(format!("Encountered an error while setting mute: {e}"))
+		})?;
+
+		Ok(())
 	}
 
 	pub fn set_local_pan(&self) {
@@ -488,8 +501,13 @@ impl VoiceConnectionInner {
 		info!(self.logger, "setRtcLogMarker called (UNIMPLEMENTED)");
 	}
 
-	pub fn set_self_deafen(&self, _deafen: bool) {
-		info!(self.logger, "setSelfDeafen called (UNIMPLEMENTED)");
+	pub fn set_self_deafen(&self, deafen: bool) -> napi::Result<()> {
+		info!(self.logger, "setSelfDeafen called (IMPLEMENTED) with deafen {deafen}");
+		self.audio_out_handle.message_sender().send(AudioOutStateMessage::SetDeafen(deafen)).map_err(|e| {
+			napi::Error::from_reason(format!("Encountered an error while setting deafen: {e}"))
+		})?;
+
+		Ok(())
 	}
 
 	pub fn set_self_mute(&self, _mute: bool) {
@@ -684,10 +702,12 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn set_local_mute(&self) {
+	pub fn set_local_mute(&self, user_id: String, mute: bool) -> napi::Result<()> {
 		if let Some(inner) = self.inner.as_ref() {
-			inner.set_local_mute();
+			inner.set_local_mute(user_id, mute)?;
 		}
+
+		Ok(())
 	}
 
 	#[napi]
@@ -851,10 +871,12 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn set_self_deafen(&self, _deafen: bool) {
+	pub fn set_self_deafen(&self, deafen: bool) -> napi::Result<()> {
 		if let Some(inner) = self.inner.as_ref() {
-			inner.set_self_deafen(_deafen);
+			inner.set_self_deafen(deafen)?;
 		}
+
+		Ok(())
 	}
 
 	#[napi]
