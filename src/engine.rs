@@ -1,3 +1,6 @@
+use std::panic::PanicHookInfo;
+use std::sync::atomic::AtomicBool;
+
 use crate::drains::JsWriter;
 use crate::{SyncMutex, SyncMutexGuard};
 
@@ -20,6 +23,47 @@ pub struct VoiceEngine {
 
 impl VoiceEngine {
 	pub(crate) fn new(mut env: Env) -> Result<Self> {
+		#[cfg(debug_assertions)]
+		std::env::set_var("RUST_BACKTRACE", "1");
+
+		#[cfg(all(windows, debug_assertions))]
+		{
+			fn panic_hook(info: &PanicHookInfo) {
+				let t: u32 = std::random::random();
+				let file_name = format!("algos-panic.{t}.txt");
+
+				let file_path = dirs::home_dir()
+					.and_then(|mut path| {
+						path.join("Desktop").join(&file_name).to_str().map(|s| s.to_owned())
+					})
+					.unwrap_or_else(|| file_name);
+
+				// The current implementation always returns `Some`.
+				let location = info.location().unwrap();
+
+				let msg = info.payload_as_str().unwrap_or("<no message>");
+				let thread = std::thread::current();
+				let name = thread.name().unwrap_or("<unnamed>");
+
+				let write = |err: &mut dyn std::io::Write| {
+					// Use a lock to prevent mixed output in multithreading context.
+					// Some platforms also require it when printing a backtrace, like `SymFromAddr` on Windows.
+					let bt = std::backtrace::Backtrace::capture();
+
+					let _ = writeln!(err, "thread '{name}' panicked at {location}:\n{msg}");
+
+					static FIRST_PANIC: AtomicBool = AtomicBool::new(true);
+
+					writeln!(err, "{bt:#?}").unwrap();
+				};
+
+				let t: u32 = std::random::random();
+				let mut panic_log = std::fs::File::create(file_path).unwrap();
+				write(&mut panic_log);
+			}
+			std::panic::set_hook(Box::new(panic_hook));
+		}
+
 		// TODO: Cursed...
 		// let file_path = dirs::home_dir()
 		// 	.and_then(|mut path| path.join("algos.log").to_str().map(|s| s.to_owned()))
