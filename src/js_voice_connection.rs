@@ -1,4 +1,10 @@
-use algos_core::voice_connection::{audio_thread::{AudioInState, AudioOutStateHandle, AudioOutStateMessage}, PingerHandle};
+use algos_core::voice_connection::{
+	audio_thread::{
+		AudioInState, AudioInStateHandle, AudioInStateMessage, AudioOutStateHandle,
+		AudioOutStateMessage,
+	},
+	PingerHandle,
+};
 use cpal::{
 	traits::{DeviceTrait, HostTrait, StreamTrait},
 	Stream,
@@ -43,6 +49,7 @@ struct VoiceConnectionInner {
 	pinger: PingerHandle,
 	user_manager: UserManagerHandle,
 	audio_out_handle: AudioOutStateHandle,
+	audio_in_handle: AudioInStateHandle,
 	crypt: Arc<SyncMutex<VoiceConnectionCrypt>>,
 	out_stream: Option<Stream>,
 	in_stream: Option<Stream>,
@@ -76,7 +83,7 @@ impl VoiceConnectionInner {
 		let crypt = Arc::new(SyncMutex::new(VoiceConnectionCrypt::new()));
 
 		let (audio_out_handle, out_callback) = AudioOutState::create_callback();
-		let (reader, in_callback) = AudioInState::create_callback();
+		let (audio_in_handle, reader, in_callback) = AudioInState::create_callback();
 
 		let user_manager = UserManager::start(audio_out_handle.clone(), video_thread);
 
@@ -200,6 +207,7 @@ impl VoiceConnectionInner {
 			pinger,
 			user_manager,
 			audio_out_handle,
+			audio_in_handle,
 			crypt,
 			out_stream,
 			in_stream,
@@ -297,14 +305,17 @@ impl VoiceConnectionInner {
 	pub fn set_local_mute(&self, user_id: String, mute: bool) -> napi::Result<()> {
 		info!(self.logger, "setLocalMute called (IMPLEMENTED) for user {user_id} with mute {mute}");
 
-		self.user_manager.message_sender().send(UserManagerMessage::SetMute(
-			user_id.parse().map_err(|e| {
-				napi::Error::from_reason(format!("Failed to parse user ID: {e}"))
-			})?,
-			mute,
-		)).map_err(|e| {
-			napi::Error::from_reason(format!("Encountered an error while setting mute: {e}"))
-		})?;
+		self.user_manager
+			.message_sender()
+			.send(UserManagerMessage::SetMute(
+				user_id.parse().map_err(|e| {
+					napi::Error::from_reason(format!("Failed to parse user ID: {e}"))
+				})?,
+				mute,
+			))
+			.map_err(|e| {
+				napi::Error::from_reason(format!("Encountered an error while setting mute: {e}"))
+			})?;
 
 		Ok(())
 	}
@@ -503,15 +514,24 @@ impl VoiceConnectionInner {
 
 	pub fn set_self_deafen(&self, deafen: bool) -> napi::Result<()> {
 		info!(self.logger, "setSelfDeafen called (IMPLEMENTED) with deafen {deafen}");
-		self.audio_out_handle.message_sender().send(AudioOutStateMessage::SetDeafen(deafen)).map_err(|e| {
-			napi::Error::from_reason(format!("Encountered an error while setting deafen: {e}"))
-		})?;
+		self.audio_out_handle
+			.message_sender()
+			.send(AudioOutStateMessage::SetDeafen(deafen))
+			.map_err(|e| {
+				napi::Error::from_reason(format!("Encountered an error while setting deafen: {e}"))
+			})?;
 
 		Ok(())
 	}
 
-	pub fn set_self_mute(&self, _mute: bool) {
-		info!(self.logger, "setSelfMute called (UNIMPLEMENTED)");
+	pub fn set_self_mute(&self, mute: bool) -> napi::Result<()> {
+		info!(self.logger, "setSelfMute called (IMPLEMENTED) with mute {mute}");
+
+		self.audio_in_handle.message_sender().send(AudioInStateMessage::SetMute(mute)).map_err(
+			|e| napi::Error::from_reason(format!("Encountered an error while setting mute: {e}")),
+		)?;
+
+		Ok(())
 	}
 
 	pub fn set_transport_options(&self, env: Env, transport_options: JsObject) -> napi::Result<()> {
@@ -880,10 +900,12 @@ impl VoiceConnection {
 	}
 
 	#[napi]
-	pub fn set_self_mute(&self, _mute: bool) {
+	pub fn set_self_mute(&self, mute: bool) -> napi::Result<()> {
 		if let Some(inner) = self.inner.as_ref() {
-			inner.set_self_mute(_mute);
+			inner.set_self_mute(mute)?;
 		}
+
+		Ok(())
 	}
 
 	#[napi]

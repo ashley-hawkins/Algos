@@ -93,12 +93,13 @@ impl AudioOutState {
 				continue;
 			}
 
+			if self.defeaned {
+				continue;
+			}
+
 			user.reader.read_chunk(data.len()).unwrap().into_iter().zip(data.iter_mut()).for_each(
 				|(src, dst)| {
-					if !self.defeaned
-					{
-						*dst += vol * src;
-					}
+					*dst += vol * src;
 				},
 			);
 		}
@@ -125,31 +126,68 @@ impl AudioOutState {
 	}
 }
 
-pub struct LocalUserCommon {
-	pub volume: AtomicF32,
-	pub muted: AtomicBool,
+pub struct AudioInState {
+	writer: rtrb::Producer<f32>,
+	muted: bool,
 }
 
-pub struct AudioInState {
-	common: Arc<LocalUserCommon>,
-	writer: rtrb::Producer<f32>,
+pub enum AudioInStateMessage {
+	SetMute(bool),
+}
+
+#[derive(Clone)]
+pub struct AudioInStateHandle {
+	message_sender: flume::Sender<AudioInStateMessage>,
+}
+
+impl AudioInStateHandle {
+	pub fn message_sender(&self) -> flume::Sender<AudioInStateMessage> {
+		self.message_sender.clone()
+	}
 }
 
 impl AudioInState {
-	pub fn create_callback() -> (rtrb::Consumer<f32>, impl FnMut(&[f32], &cpal::InputCallbackInfo))
-	{
+	pub fn create_callback(
+	) -> (AudioInStateHandle, rtrb::Consumer<f32>, impl FnMut(&[f32], &cpal::InputCallbackInfo)) {
+		let (message_sender, message_receiver) = flume::bounded(2);
 		let (writer, reader) = rtrb::RingBuffer::new(5760 * 20);
-		let common = Arc::new(LocalUserCommon {
-			volume: AtomicF32::new(1.0),
-			muted: AtomicBool::new(false),
-		});
 
-		let mut this = Self { writer, common };
+		let mut this = Self { writer, muted: false };
 
-		(reader, move |data, _info| this.data_callback(data))
+		(AudioInStateHandle { message_sender }, reader, move |data, _info| {
+			this.data_callback(&message_receiver, data)
+		})
 	}
 
-	fn data_callback(&mut self, data: &[f32]) {
+	fn data_callback(
+		&mut self,
+		message_receiver: &flume::Receiver<AudioInStateMessage>,
+		data: &[f32],
+	) {
+		loop {
+			let x = message_receiver.try_recv();
+
+			match x {
+				Ok(x) => {
+					self.process_message(x);
+				}
+				Err(flume::TryRecvError::Empty) => break,
+				Err(flume::TryRecvError::Disconnected) => panic!(),
+			}
+		}
+
+		if self.muted {
+			return;
+		}
+
 		try_write(&mut self.writer, data);
+	}
+
+	fn process_message(&mut self, message: AudioInStateMessage) {
+		match message {
+			AudioInStateMessage::SetMute(mute) => {
+				self.muted = mute;
+			}
+		}
 	}
 }
