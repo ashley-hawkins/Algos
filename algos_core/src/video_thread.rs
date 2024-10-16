@@ -4,6 +4,7 @@ use std::{
 	net::{Ipv4Addr, UdpSocket},
 	rc::Rc,
 	sync::Arc,
+	thread::JoinHandle,
 };
 
 use gst::{bus::BusWatchGuard, prelude::*};
@@ -18,6 +19,7 @@ pub enum VideoThreadCommand {
 	CreateStream { stream_id: u64 },
 	DestroyStream { stream_id: u64 },
 	Packet { stream_id: u64, packet: Vec<u8> },
+	End,
 }
 
 #[derive(Clone)]
@@ -25,74 +27,91 @@ pub struct VideoThreadHandle {
 	pub sender: flume::Sender<VideoThreadCommand>,
 }
 
-pub fn run_video_thread(logger: slog::Logger) -> VideoThreadHandle {
+pub fn run_video_thread(logger: slog::Logger) -> (VideoThreadHandle, JoinHandle<()>) {
 	let (sender, receiver) = flume::unbounded();
 
 	let udp_sender = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-	std::thread::spawn(move || {
+	let join_handle = std::thread::spawn(move || {
 		let main_context = glib::MainContext::default();
 		let _main_context_guard = main_context.acquire().unwrap();
+
+		let main_loop = Rc::new(glib::MainLoop::new(None, false));
 
 		let next_stream_id = Rc::new(RefCell::new(0));
 
 		let mut streams = HashMap::new();
 
-		let idle = glib::idle_add_local(move || {
-			receiver.try_recv().ok().map(|cmd| match cmd {
-				VideoThreadCommand::ReserveStream { reply_to } => {
-					let this_stream_id = *next_stream_id.borrow();
+		let idle = glib::idle_add_local({
+			let main_loop = main_loop.clone();
+			move || {
+				if let Ok(cmd) = receiver.try_recv() {
+					match cmd {
+						VideoThreadCommand::ReserveStream { reply_to } => {
+							let this_stream_id = *next_stream_id.borrow();
 
-					*next_stream_id.borrow_mut() += 1;
+							*next_stream_id.borrow_mut() += 1;
 
-					streams.insert(this_stream_id, None);
+							streams.insert(this_stream_id, None);
 
-					reply_to.send(this_stream_id).unwrap();
-				}
-				VideoThreadCommand::CreateStream { stream_id } => {
-					add_stream(logger.clone(), stream_id, &mut streams);
-				}
-				VideoThreadCommand::DestroyStream { stream_id } => {
-					println!("Destroying stream in video thread");
-					streams.remove(&stream_id);
-				}
-				VideoThreadCommand::Packet { stream_id, packet } => {
-					if let Some(Some((sender, _))) = streams.get_mut(&stream_id) {
-						// sender.send(packet).unwrap();
-						let res =
-							udp_sender.send_to(&packet, (Ipv4Addr::new(127, 0, 0, 1), *sender));
+							reply_to.send(this_stream_id).unwrap();
+						}
+						VideoThreadCommand::CreateStream { stream_id } => {
+							add_stream(logger.clone(), stream_id, &mut streams);
+						}
+						VideoThreadCommand::DestroyStream { stream_id } => {
+							println!("Destroying stream in video thread");
+							if let Some(Some((port, (elem, watchguard)))) =
+								streams.remove(&stream_id)
+							{
+								drop(watchguard);
 
-						//
+								elem.set_state(gst::State::Null).unwrap();
+								drop(elem);
+							}
+						}
+						VideoThreadCommand::Packet { stream_id, packet } => {
+							if let Some(Some((sender, _))) = streams.get_mut(&stream_id) {
+								// sender.send(packet).unwrap();
+								let res = udp_sender
+									.send_to(&packet, (Ipv4Addr::new(127, 0, 0, 1), *sender));
 
-						// let buf = gst::Buffer::with_size(packet.len()).unwrap();
+								//
 
-						// let mut buf = buf.into_mapped_buffer_writable().unwrap();
-						// buf.copy_from_slice(&packet);
+								// let buf = gst::Buffer::with_size(packet.len()).unwrap();
 
-						// let mut buf = buf.into_buffer();
-						// // {
-						// // 	let buf = buf.get_mut().unwrap();
-						// // 	buf.set_size(packet.len());
-						// // 	buf.set_pts(gst::ClockTime::from_mseconds(
-						// // 		begin.elapsed().as_millis() as u64
-						// // 	));
-						// // }
+								// let mut buf = buf.into_mapped_buffer_writable().unwrap();
+								// buf.copy_from_slice(&packet);
 
-						// let _ = sender.push_buffer(buf);
+								// let mut buf = buf.into_buffer();
+								// // {
+								// // 	let buf = buf.get_mut().unwrap();
+								// // 	buf.set_size(packet.len());
+								// // 	buf.set_pts(gst::ClockTime::from_mseconds(
+								// // 		begin.elapsed().as_millis() as u64
+								// // 	));
+								// // }
 
-						// //
+								// let _ = sender.push_buffer(buf);
+
+								// //
+							}
+						}
+						VideoThreadCommand::End => {
+							main_loop.quit();
+							return glib::ControlFlow::Break;
+						}
 					}
 				}
-			});
-			glib::ControlFlow::Continue
+				glib::ControlFlow::Continue
+			}
 		});
 
-		let main_loop = glib::MainLoop::new(None, false);
 		gst::init().unwrap();
 		main_loop.run();
 	});
 
-	VideoThreadHandle { sender }
+	(VideoThreadHandle { sender }, join_handle)
 }
 
 // fn add_stream(this_stream_id: u64, streams: &mut HashMap<u64, Option<(flume::Sender<Vec<u8>>, gst::Element)>>) {
@@ -197,4 +216,32 @@ fn add_stream(
 	let port = udp_src.property::<i32>("port") as u16;
 	// streams.insert(this_stream_id, Some((packet_sender, e.upcast())));
 	streams.insert(this_stream_id, Some((port, (e.upcast(), guard))));
+}
+
+#[cfg(test)]
+mod test {
+	use std::hint::black_box;
+
+	use sloggers::Build;
+
+	use super::*;
+
+	#[test]
+	fn test_video_thread() {
+		let logger = sloggers::null::NullLoggerBuilder.build().unwrap();
+		let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+		let (video_handle, join_handle) = run_video_thread(logger);
+		rt.block_on(async move {
+			let (stream_id_tx, stream_id_rx) = oneshot::channel();
+			video_handle
+				.sender
+				.send_async(VideoThreadCommand::ReserveStream { reply_to: stream_id_tx })
+				.await;
+			let stream_id = stream_id_rx.await.unwrap();
+			video_handle.sender.send_async(VideoThreadCommand::CreateStream { stream_id }).await;
+			video_handle.sender.send_async(VideoThreadCommand::DestroyStream { stream_id }).await;
+			video_handle.sender.send_async(VideoThreadCommand::End).await;
+		});
+		join_handle.join();
+	}
 }

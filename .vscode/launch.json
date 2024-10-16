@@ -10,6 +10,21 @@
             "pid": "${command:pickProcess}",
             "sourceLanguages": ["rust", "rs"],
             "name": "Attach to PID",
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Cargo test",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--package",
+                    "algos_core",
+                    "--lib"
+                ]
+            },
+            "args": []
         }
     ]
 }

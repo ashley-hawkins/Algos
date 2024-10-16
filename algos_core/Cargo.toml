@@ -24,6 +24,7 @@ samplerate = "0.2.4"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_with = "3.11.0"
 slog = "2.7.0"
+sloggers = "2.2.0"
 static_assertions_next = "1.1.2"
 strum = { version = "0.26.3", features = ["derive"] }
 tokio = { version = "1.40.0", features = [

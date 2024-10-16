@@ -100,7 +100,7 @@ impl VoiceEngine {
 		let root_logger = slog::Logger::root(drain3, o!("class" => "VoiceEngine"));
 		info!(root_logger, "Initialized"; "pid" => std::process::id());
 
-		let video_thread = run_video_thread(root_logger.clone());
+		let (video_thread, video_thread_join_handle) = run_video_thread(root_logger.clone());
 		Ok(Self { root_logger, options: None, video_thread })
 	}
 
