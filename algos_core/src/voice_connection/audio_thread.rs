@@ -1,6 +1,5 @@
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::Arc;
 
-use atomic_float::AtomicF32;
 use cpal::OutputCallbackInfo;
 
 use super::user_manager::{try_write, RemoteUserCommon};

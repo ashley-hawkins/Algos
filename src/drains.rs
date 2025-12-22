@@ -2,11 +2,11 @@ use std::io;
 use std::sync::Arc;
 
 use derivative::Derivative;
-use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi::Status;
+use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi::{
-	threadsafe_function::{ErrorStrategy, ThreadsafeFunction},
 	Env,
+	threadsafe_function::{ErrorStrategy, ThreadsafeFunction},
 };
 use slog::{Drain, Duplicate};
 
@@ -76,7 +76,7 @@ impl<D> SharedDrain<D> {
 		Self { inner: Arc::new(SyncMutex::new(drain)) }
 	}
 
-	fn get(&self) -> SyncMutexGuard<D> {
+	fn get(&self) -> SyncMutexGuard<'_, D> {
 		self.inner.lock()
 	}
 }
@@ -133,10 +133,7 @@ impl io::Write for JsWriter {
 		if status == Status::Ok {
 			Ok(buf.len())
 		} else {
-			Err(io::Error::new(
-				io::ErrorKind::Other,
-				format!("Failed to call JS function, {status:?}"),
-			))
+			Err(io::Error::other(format!("Failed to call JS function, {status:?}")))
 		}
 	}
 
@@ -173,19 +170,11 @@ impl<W: io::Write> OptionalWriter<W> {
 
 impl<W: io::Write> io::Write for OptionalWriter<W> {
 	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-		if let Some(writer) = self.inner.as_mut() {
-			writer.write(buf)
-		} else {
-			Ok(buf.len())
-		}
+		if let Some(writer) = self.inner.as_mut() { writer.write(buf) } else { Ok(buf.len()) }
 	}
 
 	fn flush(&mut self) -> io::Result<()> {
-		if let Some(writer) = self.inner.as_mut() {
-			writer.flush()
-		} else {
-			Ok(())
-		}
+		if let Some(writer) = self.inner.as_mut() { writer.flush() } else { Ok(()) }
 	}
 }
 
@@ -200,7 +189,7 @@ impl<W: io::Write> SharedWriter<W> {
 		Self { inner: Arc::new(SyncMutex::new(writer)) }
 	}
 
-	pub fn get(&self) -> SyncMutexGuard<W> {
+	pub fn get(&self) -> SyncMutexGuard<'_, W> {
 		self.inner.lock()
 	}
 }
@@ -229,7 +218,7 @@ impl<W: io::Write> ImmediateBufferedWriter<W> {
 		while !self.buffer.is_empty() {
 			match self.inner.write(&self.buffer) {
 				Ok(0) => {
-					return Err(io::Error::new(io::ErrorKind::WriteZero, "failed to write data"))
+					return Err(io::Error::new(io::ErrorKind::WriteZero, "failed to write data"));
 				}
 				Ok(n) => self.buffer.drain(..n),
 				Err(e) => return Err(e),

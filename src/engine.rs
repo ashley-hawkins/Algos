@@ -1,6 +1,3 @@
-use std::panic::PanicHookInfo;
-use std::sync::atomic::AtomicBool;
-
 use crate::drains::JsWriter;
 use crate::{SyncMutex, SyncMutexGuard};
 
@@ -123,7 +120,7 @@ impl SyncVoiceEngine {
 		Self(SyncMutex::new(inner))
 	}
 
-	pub(crate) fn lock(&self) -> SyncMutexGuard<VoiceEngine> {
+	pub(crate) fn lock(&self) -> SyncMutexGuard<'_, VoiceEngine> {
 		self.0.lock()
 	}
 
