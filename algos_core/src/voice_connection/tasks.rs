@@ -152,7 +152,7 @@ pub fn start_voice_sender(
 	tokio::spawn(async move {
 		let mut buffer = [0.0; TOTAL_SAMPLES_PER_FRAME];
 		let mut sequence = 0;
-		let mut timestamp: u32 = random::random();
+		let mut timestamp: u32 = random::random(..);
 		loop {
 			let available = match reader.read_chunk(TOTAL_SAMPLES_PER_FRAME) {
 				Ok(read_chunk) => {

@@ -1,4 +1,3 @@
-#![feature(inline_const_pat)]
 #![feature(random)]
 #![feature(let_chains)]
 

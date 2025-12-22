@@ -23,8 +23,9 @@ pub struct VoiceEngine {
 
 impl VoiceEngine {
 	pub(crate) fn new(mut env: Env) -> Result<Self> {
+		// TODO: Figure out if this is unsafe or not because js is single threaded
 		#[cfg(debug_assertions)]
-		std::env::set_var("RUST_BACKTRACE", "1");
+		unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
 
 		#[cfg(all(windows, debug_assertions))]
 		{

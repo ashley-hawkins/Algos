@@ -42,7 +42,7 @@ impl TryFrom<&[u8]> for VoiceConnMessage {
 		match value.len() {
 			8 => Ok(VoiceConnMessage::Ping { seq: value[4] }),
 
-			const { IpDiscoveryPacket::packet_size() } => {
+			x if x == const { IpDiscoveryPacket::packet_size() } => {
 				Ok(VoiceConnMessage::IpDiscovery(value.try_into()?))
 			}
 

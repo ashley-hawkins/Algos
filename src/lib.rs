@@ -1,9 +1,6 @@
 #![deny(clippy::all)]
 #![feature(mapped_lock_guards)]
-#![feature(inline_const_pat)]
-#![feature(let_chains)]
 #![feature(panic_backtrace_config)]
-#![feature(panic_payload_as_str)]
 #![feature(random)]
 // TODO: It may be better if this were enabled, but we would need to go through and figure out how to stop the false positives.
 #![allow(unused)]
